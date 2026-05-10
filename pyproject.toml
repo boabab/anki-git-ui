@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anki-git-ui"
+version = "0.1.0"
+description = "Friendly TUI for anki-gitify: subscribe to deck repos on GitHub and prepare them for Anki."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+authors = [{ name = "Robin" }]
+dependencies = [
+    "anki-gitify>=0.2.0",
+    "textual>=0.80",
+    "platformdirs>=4.0",
+    "tomlkit>=0.13",
+    "darkdetect>=0.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-textual-snapshot>=1.0",
+    "ruff>=0.6",
+]
+packaging = [
+    "pyinstaller>=6.10",
+]
+
+[project.scripts]
+anki-git-ui = "anki_git_ui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anki_git_ui"]
+
+[tool.uv.sources]
+anki-gitify = { path = "../anki-gitify", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Anki Deck Sync
+GenericName=Anki Deck Subscription Manager
+Comment=Subscribe to Anki decks shared on GitHub and prepare them for Anki.
+Exec=anki-git-ui
+Icon=anki-git-ui
+Terminal=true
+Categories=Education;Languages;
+Keywords=anki;flashcards;

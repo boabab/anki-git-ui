@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: anki-git-ui
+
+      # The TUI depends on anki-gitify as a sibling path. CI checks out both
+      # repos so the editable path-dep in pyproject.toml resolves.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/anki-gitify
+          path: anki-gitify
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        working-directory: anki-git-ui
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../anki-gitify
+          pip install -e ".[dev]"
+
+      - name: Lint
+        working-directory: anki-git-ui
+        run: ruff check src tests
+
+      - name: Tests
+        working-directory: anki-git-ui
+        run: pytest -v

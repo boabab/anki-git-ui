@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the .app/.exe (no actual tag is created)"
+        required: false
+        default: "0.0.0-dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest          # Apple Silicon
+            artifact: AnkiGitUI-macos-arm64.zip
+          - os: macos-13              # Intel
+            artifact: AnkiGitUI-macos-x86_64.zip
+          - os: ubuntu-latest
+            artifact: AnkiGitUI-linux-x86_64.AppImage
+          - os: windows-latest
+            artifact: AnkiGitUI-windows-x86_64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: anki-git-ui
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/anki-gitify
+          path: anki-gitify
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        working-directory: anki-git-ui
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../anki-gitify
+          pip install -e ".[dev,packaging]"
+
+      - name: Run tests
+        working-directory: anki-git-ui
+        run: pytest -q
+
+      - name: Build PyInstaller binary
+        working-directory: anki-git-ui/packaging
+        shell: bash
+        run: pyinstaller --noconfirm pyinstaller.spec
+
+      # ---------- macOS .app ---------- #
+      - name: Build macOS .app
+        if: startsWith(matrix.os, 'macos')
+        working-directory: anki-git-ui
+        run: |
+          packaging/macos/build_app.sh "${{ steps.version.outputs.value }}"
+          cd packaging/dist
+          ditto -c -k --keepParent AnkiGitUI.app "${{ matrix.artifact }}"
+
+      # ---------- Linux AppImage ---------- #
+      - name: Install appimagetool
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          sudo mv appimagetool /usr/local/bin/
+
+      - name: Build Linux AppImage
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: anki-git-ui
+        run: |
+          packaging/linux/build_appimage.sh
+          mv packaging/dist/AnkiGitUI-x86_64.AppImage "packaging/dist/${{ matrix.artifact }}"
+
+      # ---------- Windows zip ---------- #
+      - name: Package Windows .exe
+        if: matrix.os == 'windows-latest'
+        working-directory: anki-git-ui/packaging/dist
+        shell: pwsh
+        run: |
+          Rename-Item anki-git-ui-bin.exe AnkiGitUI.exe
+          Compress-Archive -Path AnkiGitUI.exe -DestinationPath "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: anki-git-ui/packaging/dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
