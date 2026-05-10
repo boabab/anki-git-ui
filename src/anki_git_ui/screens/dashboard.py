@@ -81,6 +81,15 @@ class DashboardScreen(Screen):
                 yield Button("+ Add a new deck", id="add-deck", variant="primary")
         yield Footer()
 
+    def on_screen_resume(self) -> None:
+        """Re-render whenever this screen comes back into focus.
+
+        Adding a deck, downloading one, removing one, or finishing a build
+        all happen on other screens; without this, popping back to the
+        dashboard would show the snapshot from the last time it was mounted.
+        """
+        self.refresh(recompose=True)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "help":

@@ -32,8 +32,11 @@ ANKI_LIGHT = Theme(
     foreground="#1a1a1a",
     background="#ffffff",
     surface="#ffffff",
-    panel="#eeeeee",
-    boost="#e0e0e0",
+    # $panel is the default Button background. It needs enough contrast with
+    # $surface (white) for the Cancel-style button to be visible without a
+    # contrasting border.
+    panel="#dcdcdc",
+    boost="#cccccc",
     dark=False,
 )
 

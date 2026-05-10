@@ -26,51 +26,55 @@ class AnkiGitUIApp(App):
         background: $surface;
     }
 
-    /* Project-wide Button styling: flat rounded look so the default
-       Textual "tall" border (with its highlight stripe) doesn't show up,
-       and so non-primary buttons stay visible on light backgrounds. */
+    /* Project-wide Button styling.
+       - `border: none` instead of Textual's default `tall`. The tall border
+         relies on ▊ (LEFT SEVEN EIGHTHS BLOCK) for the left edge, which
+         renders as transparent on some terminal fonts (notably macOS
+         Terminal.app's default), making buttons look like their left edge
+         is "cut off". A no-border button is just a colored rectangle —
+         visible everywhere, no font-rendering surprises.
+       - The button's background is $panel — distinct from $surface so it
+         reads as a clickable element against the screen background even
+         in light mode without needing a border at all.
+       - :focus only bolds the label. Coloring the border on focus made the
+         "previously clicked" button look like it stayed orange when the
+         user came back to the screen, because Textual restores focus on
+         screen pop. */
     Button {
         height: 3;
-        min-width: 12;
-        border: round $primary 60%;
-        background: $boost;
+        min-width: 14;
+        border: none;
+        padding: 0 2;
+        background: $panel;
         color: $foreground;
-        padding: 0 1;
     }
     Button:hover {
-        background: $primary 25%;
-        border: round $primary;
+        background: $primary 30%;
     }
     Button:focus {
         text-style: bold;
-        border: round $accent;
     }
     Button:disabled {
-        text-opacity: 50%;
-        border: round $foreground 25%;
+        text-opacity: 40%;
         background: $surface;
     }
 
     Button.-primary {
         background: $primary;
         color: white;
-        border: round $primary;
         text-style: bold;
     }
     Button.-primary:hover {
-        background: $primary 80%;
-        border: round $primary 80%;
+        background: $primary-lighten-1;
     }
 
     Button.-error {
         background: $error;
         color: white;
-        border: round $error;
         text-style: bold;
     }
     Button.-error:hover {
-        background: $error 80%;
-        border: round $error 80%;
+        background: $error-lighten-1;
     }
     """
 

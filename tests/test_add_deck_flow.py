@@ -102,3 +102,45 @@ async def test_remove_deck_confirm_drops_from_list(make_app) -> None:
         await pilot.pause()
         assert isinstance(app.screen, DashboardScreen)
         assert len(app.app_state.decks) == starting_count - 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_shows_decks_added_while_away(make_app) -> None:
+    """Regression: adding a deck on another screen must show up on the
+    dashboard when the user navigates back."""
+    from anki_git_ui.domain.models import DeckEntry, DeckStatus
+    from anki_git_ui.widgets.deck_card import DeckCard
+
+    app = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        starting_count = len(app.app_state.decks)
+
+        # Push a different screen — the dashboard goes into the background.
+        _press(app, "#help")
+        await pilot.pause()
+
+        # Simulate a deck being added on another screen (this is what the
+        # add-deck flow does in production via _submit). At this point the
+        # dashboard's compose() has already run and won't auto-update.
+        new_deck = DeckEntry(
+            nickname="Newly Added",
+            url="https://github.com/example/newly-added",
+            local_path=app.config.default_save_folder / "newly-added",
+            status=DeckStatus.NOT_DOWNLOADED,
+        )
+        app.app_state.decks.append(new_deck)
+        app.config.decks.append(new_deck)
+
+        # Pop back to dashboard — on_screen_resume should refresh the cards.
+        _press(app, "#back")
+        await pilot.pause()
+        assert isinstance(app.screen, DashboardScreen)
+
+        cards = list(app.screen.query(DeckCard))
+        assert len(cards) == starting_count + 1, (
+            f"expected {starting_count + 1} cards, got {len(cards)}"
+        )
+        # New deck visible by nickname
+        nicknames = [card._deck.nickname for card in cards]
+        assert "Newly Added" in nicknames
