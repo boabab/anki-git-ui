@@ -58,7 +58,7 @@ class SettingsScreen(Screen):
         display: none;
     }
     #buttons-row {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }

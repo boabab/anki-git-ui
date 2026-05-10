@@ -49,7 +49,7 @@ class AddDeckScreen(Screen):
         padding-bottom: 1;
     }
     #add-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }

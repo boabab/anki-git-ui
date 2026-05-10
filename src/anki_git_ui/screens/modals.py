@@ -38,7 +38,7 @@ class ConfirmModal(ModalScreen[bool]):
         padding-bottom: 1;
     }
     #confirm-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }
@@ -131,7 +131,7 @@ class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
         padding-bottom: 1;
     }
     #remove-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }
@@ -220,7 +220,7 @@ class AnkiFileReadyModal(ModalScreen[str | None]):
         padding: 0 0 1 2;
     }
     #ready-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }
@@ -295,7 +295,7 @@ class AnkiLockedModal(ModalScreen[bool]):
         padding-bottom: 1;
     }
     #locked-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }
@@ -368,7 +368,7 @@ class ErrorModal(ModalScreen[None]):
         display: block;
     }
     #error-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: right;
         padding-top: 1;
     }

@@ -57,7 +57,7 @@ class WelcomeScreen(Screen):
     .check-warn { color: $warning; }
     .check-error { color: $error; }
     .welcome-buttons {
-        height: 3;
+        height: auto;
         align-horizontal: center;
         padding-top: 1;
     }
