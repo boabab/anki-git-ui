@@ -22,6 +22,11 @@ class AnkiGitUIApp(App):
     SUB_TITLE = ""
 
     CSS = """
+    .title {
+        height: 3;
+        content-align: left middle;
+    }
+
     Screen {
         background: $surface;
     }
