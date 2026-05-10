@@ -63,4 +63,4 @@ document this on the Releases page.
   `detect_git()` path is broken on that OS.
 - **Anki collection lock errors that don't show the friendly modal** —
   upstream `anki-gitify` changed the locked-error message wording. Update
-  `is_locked_error()` in `workers/smart_decks_worker.py` to match.
+  `is_locked_error()` in `workers/filtered_decks_worker.py` to match.

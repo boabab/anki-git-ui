@@ -318,7 +318,7 @@ class AnkiLockedModal(ModalScreen[bool]):
             )
             yield Static(
                 "Your existing cards and reviews stay untouched — we only add the "
-                "smart-deck definitions.",
+                "filtered-deck definitions.",
                 classes="locked-hint",
             )
             with Horizontal(id="locked-buttons"):

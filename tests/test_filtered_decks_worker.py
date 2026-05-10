@@ -1,4 +1,4 @@
-"""Tests for the smart_decks_worker."""
+"""Tests for the filtered_decks_worker."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from anki_git_ui.domain.models import AnkiProfileChoice, DeckEntry, DeckStatus
-from anki_git_ui.workers.smart_decks_worker import (
-    apply_smart_decks,
+from anki_git_ui.workers.filtered_decks_worker import (
+    apply_filtered_decks,
     is_locked_error,
 )
 
@@ -20,7 +20,7 @@ def test_is_locked_error_matches_runtime_error_with_locked_substring() -> None:
     assert not is_locked_error(ValueError("locked but wrong type"))
 
 
-def test_apply_smart_decks_raises_when_no_filtered_yml(tmp_path: Path) -> None:
+def test_apply_filtered_decks_raises_when_no_filtered_yml(tmp_path: Path) -> None:
     deck_dir = tmp_path / "deck"
     deck_dir.mkdir()
     deck = DeckEntry(
@@ -29,11 +29,11 @@ def test_apply_smart_decks_raises_when_no_filtered_yml(tmp_path: Path) -> None:
         local_path=deck_dir,
         status=DeckStatus.UP_TO_DATE,
     )
-    with pytest.raises(FileNotFoundError, match="smart-deck"):
-        apply_smart_decks(deck, AnkiProfileChoice())
+    with pytest.raises(FileNotFoundError, match="filtered-deck"):
+        apply_filtered_decks(deck, AnkiProfileChoice())
 
 
-def test_apply_smart_decks_against_synthetic_collection(tmp_path: Path) -> None:
+def test_apply_filtered_decks_against_synthetic_collection(tmp_path: Path) -> None:
     """End-to-end against a real synthetic Anki collection plus a gitified
     directory that includes filtered_decks.yml.
     """
@@ -100,7 +100,7 @@ def test_apply_smart_decks_against_synthetic_collection(tmp_path: Path) -> None:
     target_col_path = target_dir / "collection.anki2"
     Collection(str(target_col_path)).close()
 
-    result = apply_smart_decks(
+    result = apply_filtered_decks(
         deck,
         AnkiProfileChoice(collection_override=target_col_path),
         dry_run=True,
@@ -112,8 +112,8 @@ def test_apply_smart_decks_against_synthetic_collection(tmp_path: Path) -> None:
     assert result.conflicts == []
 
 
-def test_apply_smart_decks_skips_existing(tmp_path: Path) -> None:
-    """A second apply_smart_decks call (no dry-run) is idempotent."""
+def test_apply_filtered_decks_skips_existing(tmp_path: Path) -> None:
+    """A second apply_filtered_decks call (no dry-run) is idempotent."""
     pytest.importorskip("anki")
     from anki.collection import Collection
 
@@ -171,14 +171,14 @@ def test_apply_smart_decks_skips_existing(tmp_path: Path) -> None:
     Collection(str(target_col_path)).close()
 
     # First apply: creates.
-    r1 = apply_smart_decks(
+    r1 = apply_filtered_decks(
         deck, AnkiProfileChoice(collection_override=target_col_path)
     )
     assert "Top::Cram::All" in r1.created
     assert r1.skipped == []
 
     # Second apply: idempotent (skipped, not re-created).
-    r2 = apply_smart_decks(
+    r2 = apply_filtered_decks(
         deck, AnkiProfileChoice(collection_override=target_col_path)
     )
     assert r2.created == []

@@ -1,7 +1,7 @@
 """Deck detail screen — the screen the user spends most time on.
 
 Hosts the four primary actions (Download updates / Make Anki file / Set up
-smart decks / Open deck folder) and the streaming activity log. All
+filtered decks / Open deck folder) and the streaming activity log. All
 long-running calls run in threaded workers; modal flows for success, error,
 and Anki-locked cases.
 """
@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
+from yaml import YAMLError, safe_load
 
 from ..domain.apkg_paths import (
     open_with_default_app,
@@ -28,10 +29,12 @@ from ..domain.models import DeckEntry, DeckStatus
 from ..widgets.log_panel import LogPanel
 from ..workers.download_deck_worker import download_deck
 from ..workers.make_apkg_worker import make_apkg
-from ..workers.smart_decks_worker import (
-    SmartDecksResult,
-    apply_smart_decks,
+from ..workers.filtered_decks_worker import (
+    FilteredDecksResult,
+    RebuildFilteredDecksResult,
+    apply_filtered_decks,
     is_locked_error,
+    rebuild_filtered_decks,
 )
 from ..workers.update_deck_worker import update_deck
 from .modals import AnkiFileReadyModal, AnkiLockedModal, ConfirmModal, ErrorModal
@@ -92,6 +95,13 @@ class DeckDetailScreen(Screen):
         min-width: 30;
         margin-bottom: 1;
     }
+    .action-card .button-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+    .action-card .button-row Button {
+        margin: 0 1 0 0;
+    }
     .action-card .action-help {
         color: $text-muted;
     }
@@ -136,18 +146,24 @@ class DeckDetailScreen(Screen):
                     classes="action-help",
                 )
 
-            # Smart decks card — only when filtered_decks.yml exists
-            smart_count = self._smart_decks_count()
-            if smart_count > 0:
-                with Vertical(classes="action-card", id="smart-card"):
+            # Filtered decks card — always shown so the action is discoverable.
+            with Vertical(classes="action-card", id="filtered-card"):
+                with Horizontal(classes="button-row"):
                     yield Button(
-                        f"Set up smart decks ({smart_count} found)", id="smart"
+                        self._filtered_decks_button_label(),
+                        id="filtered",
+                        disabled=self._filtered_decks_disabled(),
                     )
-                    yield Static(
-                        "This deck includes special review settings. We can add them "
-                        "to your Anki collection. Anki must be closed first.",
-                        classes="action-help",
+                    yield Button(
+                        "Rebuild all",
+                        id="rebuild-filtered",
+                        disabled=self._filtered_decks_disabled(),
                     )
+                yield Static(
+                    self._filtered_decks_help_text(),
+                    classes="action-help",
+                    id="filtered-help",
+                )
 
             # Open folder card
             with Vertical(classes="action-card", id="open-card"):
@@ -194,16 +210,38 @@ class DeckDetailScreen(Screen):
             return "Save a copy of this deck onto your computer."
         return "Save the latest version of this deck onto your computer."
 
-    def _smart_decks_count(self) -> int:
+    def _filtered_decks_count(self) -> int:
         path = self._deck.local_path / "filtered_decks.yml"
         if not path.is_file():
             return 0
-        # Cheap: count lines starting with "- name:" in YAML.
         try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
+            data = safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, YAMLError):
             return 0
-        return sum(1 for line in text.splitlines() if line.lstrip().startswith("- name:"))
+        if not isinstance(data, dict):
+            return 0
+        entries = data.get("filtered_decks") or []
+        return len(entries) if isinstance(entries, list) else 0
+
+    def _filtered_decks_button_label(self) -> str:
+        count = self._filtered_decks_count()
+        if count == 0:
+            return "Set up filtered decks (none in this deck)"
+        return f"Set up filtered decks ({count} found)"
+
+    def _filtered_decks_help_text(self) -> str:
+        if self._deck.status is DeckStatus.NOT_DOWNLOADED:
+            return "Download this deck first to see whether it includes filtered-deck definitions."
+        if self._filtered_decks_count() == 0:
+            return "This deck doesn't include any filtered-deck definitions."
+        return (
+            "This deck includes special review settings. Use 'Set up' to add them "
+            "to your Anki collection, or 'Rebuild all' to refresh the cards inside "
+            "existing filtered decks. Anki must be closed first."
+        )
+
+    def _filtered_decks_disabled(self) -> bool:
+        return self._filtered_decks_count() == 0
 
     # ---------- buttons ---------- #
 
@@ -221,8 +259,10 @@ class DeckDetailScreen(Screen):
             self._start_download(initial=initial)
         elif bid == "make":
             self._start_make_apkg()
-        elif bid == "smart":
-            self._start_smart_decks()
+        elif bid == "filtered":
+            self._start_filtered_decks()
+        elif bid == "rebuild-filtered":
+            self._start_rebuild_filtered()
         elif bid == "open-folder":
             if not reveal_in_file_manager(self._deck.local_path):
                 self.app.notify(
@@ -260,22 +300,43 @@ class DeckDetailScreen(Screen):
                 group="deck-actions",
             )
 
-    def _start_smart_decks(self) -> None:
+    def _start_filtered_decks(self) -> None:
         self._busy = True
-        self._current_op = "smart"
+        self._current_op = "filtered"
         log = self.query_one(LogPanel)
         log.clear()
-        log.set_status("Setting up smart decks…")
+        log.set_status("Setting up filtered decks…")
         self._set_action_buttons_enabled(False)
         self.run_worker(
-            self._do_smart_decks,
+            self._do_filtered_decks,
             thread=True,
             exclusive=True,
             group="deck-actions",
         )
 
-    def _do_smart_decks(self):
-        return apply_smart_decks(
+    def _do_filtered_decks(self):
+        return apply_filtered_decks(
+            self._deck,
+            self.app.config.anki,
+            on_log=self._on_log,
+        )
+
+    def _start_rebuild_filtered(self) -> None:
+        self._busy = True
+        self._current_op = "rebuild"
+        log = self.query_one(LogPanel)
+        log.clear()
+        log.set_status("Rebuilding filtered decks…")
+        self._set_action_buttons_enabled(False)
+        self.run_worker(
+            self._do_rebuild_filtered,
+            thread=True,
+            exclusive=True,
+            group="deck-actions",
+        )
+
+    def _do_rebuild_filtered(self):
+        return rebuild_filtered_decks(
             self._deck,
             self.app.config.anki,
             on_log=self._on_log,
@@ -363,8 +424,10 @@ class DeckDetailScreen(Screen):
             apkg = self._deck.last_built_apkg
             if apkg is not None:
                 self._show_ready_modal(apkg)
-        elif op == "smart" and isinstance(result, SmartDecksResult):
-            self._on_smart_decks_done(result)
+        elif op == "filtered" and isinstance(result, FilteredDecksResult):
+            self._on_filtered_decks_done(result)
+        elif op == "rebuild" and isinstance(result, RebuildFilteredDecksResult):
+            self._on_rebuild_filtered_done(result)
         self._refresh_status_line()
 
     def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
@@ -399,18 +462,18 @@ class DeckDetailScreen(Screen):
             self._handle_card_overrides()
             return
 
-        if op == "smart" and is_locked_error(err):
-            log.set_status("Smart-decks setup paused — Anki is open.")
+        if op == "filtered" and is_locked_error(err):
+            log.set_status("Filtered-decks setup paused — Anki is open.")
 
             def _retry(retry: bool | None) -> None:
                 if retry:
-                    self._start_smart_decks()
+                    self._start_filtered_decks()
 
             self.app.push_screen(AnkiLockedModal(), _retry)
             return
 
-        if op == "smart" and isinstance(err, FileNotFoundError):
-            log.set_status("Couldn't set up smart decks.")
+        if op == "filtered" and isinstance(err, FileNotFoundError):
+            log.set_status("Couldn't set up filtered decks.")
             self.app.push_screen(
                 ErrorModal(
                     title="We couldn't find your Anki",
@@ -421,13 +484,47 @@ class DeckDetailScreen(Screen):
             )
             return
 
-        if op == "smart" and isinstance(err, (ValueError, RuntimeError)):
-            log.set_status("Couldn't set up smart decks.")
+        if op == "filtered" and isinstance(err, (ValueError, RuntimeError)):
+            log.set_status("Couldn't set up filtered decks.")
             self.app.push_screen(
                 ErrorModal(
-                    title="Couldn't set up smart decks",
-                    body="Something went wrong while applying the smart-deck settings. "
+                    title="Couldn't set up filtered decks",
+                    body="Something went wrong while applying the filtered-deck settings. "
                     "Please check your Anki profile in Settings and try again.",
+                    details=f"{type(err).__name__}: {err}" if err else None,
+                )
+            )
+            return
+
+        if op == "rebuild" and is_locked_error(err):
+            log.set_status("Rebuild paused — Anki is open.")
+
+            def _retry_rebuild(retry: bool | None) -> None:
+                if retry:
+                    self._start_rebuild_filtered()
+
+            self.app.push_screen(AnkiLockedModal(), _retry_rebuild)
+            return
+
+        if op == "rebuild" and isinstance(err, FileNotFoundError):
+            log.set_status("Couldn't rebuild filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="We couldn't find your Anki",
+                    body=str(err)
+                    or "We couldn't locate your Anki collection. Open Settings to "
+                    "pick the right Anki profile or collection file.",
+                )
+            )
+            return
+
+        if op == "rebuild" and isinstance(err, (ValueError, RuntimeError)):
+            log.set_status("Couldn't rebuild filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="Couldn't rebuild filtered decks",
+                    body="Something went wrong while rebuilding. Please check your "
+                    "Anki profile in Settings and try again.",
                     details=f"{type(err).__name__}: {err}" if err else None,
                 )
             )
@@ -494,7 +591,7 @@ class DeckDetailScreen(Screen):
             _on_choice,
         )
 
-    def _on_smart_decks_done(self, result: SmartDecksResult) -> None:
+    def _on_filtered_decks_done(self, result: FilteredDecksResult) -> None:
         log = self.query_one(LogPanel)
         if result.created:
             for name in result.created:
@@ -512,12 +609,12 @@ class DeckDetailScreen(Screen):
             )
             self.app.push_screen(
                 ErrorModal(
-                    title="Some smart decks couldn't be added",
+                    title="Some filtered decks couldn't be added",
                     body=(
                         "These names already exist as normal decks in your Anki "
                         "collection, so we left them alone. Rename the existing "
-                        "deck in Anki and click 'Set up smart decks' again to add "
-                        "the smart version:\n\n  "
+                        "deck in Anki and click 'Set up filtered decks' again to add "
+                        "the filtered version:\n\n  "
                         + "\n  ".join(result.conflicts)
                     ),
                 )
@@ -526,15 +623,69 @@ class DeckDetailScreen(Screen):
 
         if result.created:
             self.app.notify(
-                f"Added {len(result.created)} smart deck(s) to your Anki collection.",
-                title="Smart decks ready",
+                f"Added {len(result.created)} filtered deck(s) to your Anki collection.",
+                title="Filtered decks ready",
             )
         else:
             self.app.notify(
-                "Smart decks were already set up — nothing to add.",
+                "Filtered decks were already set up — nothing to add.",
                 title="Already done",
             )
-        log.set_status("Smart decks ready.")
+        log.set_status("Filtered decks ready.")
+
+    def _on_rebuild_filtered_done(self, result: RebuildFilteredDecksResult) -> None:
+        log = self.query_one(LogPanel)
+        for name in result.rebuilt:
+            log.add_line(f"  ✓ {name} (rebuilt)")
+        for name in result.missing:
+            log.add_line(f"  ? {name} (not in your Anki yet)")
+        for name in result.conflicts:
+            log.add_line(f"  ! {name} (a normal deck with this name already exists)")
+
+        if result.total == 0:
+            self.app.notify(
+                "This deck has no filtered-deck definitions to rebuild.",
+                title="Nothing to rebuild",
+            )
+            log.set_status("Nothing to rebuild.")
+            return
+
+        if not result.rebuilt and result.missing and not result.conflicts:
+            log.set_status("Nothing rebuilt — filtered decks aren't in your Anki yet.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="No filtered decks to rebuild",
+                    body=(
+                        "These filtered decks aren't in your Anki collection yet. "
+                        "Click 'Set up filtered decks' first, then 'Rebuild all' to "
+                        "refresh them later."
+                    ),
+                )
+            )
+            return
+
+        if result.conflicts:
+            log.set_status(
+                f"Done — {len(result.rebuilt)} rebuilt, {len(result.conflicts)} couldn't be rebuilt."
+            )
+            self.app.push_screen(
+                ErrorModal(
+                    title="Some decks couldn't be rebuilt",
+                    body=(
+                        "These names exist as normal decks (not filtered) in your "
+                        "Anki collection, so we left them alone:\n\n  "
+                        + "\n  ".join(result.conflicts)
+                    ),
+                )
+            )
+            return
+
+        self.app.notify(
+            f"Rebuilt {len(result.rebuilt)} filtered deck(s)."
+            + (f" {len(result.missing)} not in Anki yet." if result.missing else ""),
+            title="Filtered decks rebuilt",
+        )
+        log.set_status("Filtered decks rebuilt.")
 
     def _show_ready_modal(self, apkg: Path) -> None:
         def _on_ready(choice: str | None) -> None:
@@ -552,10 +703,13 @@ class DeckDetailScreen(Screen):
     # ---------- UI mutation helpers ---------- #
 
     def _set_action_buttons_enabled(self, enabled: bool) -> None:
-        for btn_id in ("download", "make", "smart", "open-folder"):
+        for btn_id in ("download", "make", "filtered", "rebuild-filtered", "open-folder"):
             try:
                 btn = self.query_one(f"#{btn_id}", Button)
             except Exception:
+                continue
+            if btn_id in ("filtered", "rebuild-filtered") and self._filtered_decks_disabled():
+                btn.disabled = True
                 continue
             btn.disabled = not enabled
 
@@ -564,5 +718,10 @@ class DeckDetailScreen(Screen):
             self.query_one("#status-line", Static).update(self._status_line())
             self.query_one("#download", Button).label = self._download_label()
             self.query_one("#download-help", Static).update(self._download_help())
+            filtered_btn = self.query_one("#filtered", Button)
+            filtered_btn.label = self._filtered_decks_button_label()
+            filtered_btn.disabled = self._filtered_decks_disabled()
+            self.query_one("#rebuild-filtered", Button).disabled = self._filtered_decks_disabled()
+            self.query_one("#filtered-help", Static).update(self._filtered_decks_help_text())
         except Exception:
             pass

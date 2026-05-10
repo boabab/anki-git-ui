@@ -1,6 +1,6 @@
 """LogPanel: a streaming log + progress bar combo for long-running operations.
 
-Used by the deck detail screen during downloads, builds, and smart-deck
+Used by the deck detail screen during downloads, builds, and filtered-deck
 applications. Lines arrive via :py:meth:`add_line`; progress updates via
 :py:meth:`set_progress` (0-100 plus an optional phase label).
 """
