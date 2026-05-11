@@ -46,12 +46,12 @@ class DeckCard(Vertical):
     DEFAULT_CSS = """
     DeckCard {
         height: auto;
-        border: round $surface-lighten-2;
+        border: round $border-blurred;
         padding: 1 2;
         margin-bottom: 1;
     }
-    DeckCard:focus-within {
-        border: round $primary;
+    DeckCard:dark {
+        border: round $surface-lighten-2;
     }
     DeckCard .deck-title {
         text-style: bold;

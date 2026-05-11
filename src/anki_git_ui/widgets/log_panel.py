@@ -18,8 +18,11 @@ class LogPanel(Vertical):
     DEFAULT_CSS = """
     LogPanel {
         height: auto;
-        border: round $surface-lighten-2;
+        border: round $border-blurred;
         padding: 1 2;
+    }
+    LogPanel:dark {
+        border: round $surface-lighten-2;
     }
     LogPanel > .log-status {
         color: $text-muted;

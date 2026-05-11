@@ -1,15 +1,15 @@
 """Deck detail screen — the screen the user spends most time on.
 
-Hosts the four primary actions (Download updates / Make Anki file / Set up
-filtered decks / Open deck folder) and the streaming activity log. All
-long-running calls run in threaded workers; modal flows for success, error,
-and Anki-locked cases.
+Hosts the three primary actions (Download updates / Make Anki file / Set up
+filtered decks) and the streaming activity log. All long-running calls run
+in threaded workers; modal flows for success, error, and Anki-locked cases.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from anki_gitify.api import CardOverrideError
 from textual.app import ComposeResult
@@ -56,6 +56,28 @@ def _humanize(dt: datetime | None) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
+class _MetaLink(Static):
+    """The clickable link/path inside a meta row — hover-underlined, not the whole line."""
+
+    DEFAULT_CSS = """
+    _MetaLink {
+        width: auto;
+        color: $text-muted;
+    }
+    _MetaLink:hover {
+        color: $primary;
+        text-style: underline;
+    }
+    """
+
+    def __init__(self, text: str, *, on_open: Callable[[], None], **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._on_open = on_open
+
+    def on_click(self) -> None:
+        self._on_open()
+
+
 class DeckDetailScreen(Screen):
     DEFAULT_CSS = """
     DeckDetailScreen {
@@ -78,30 +100,30 @@ class DeckDetailScreen(Screen):
     #detail-body {
         padding: 1 4;
     }
-    .deck-meta {
+    .meta-row {
+        height: 1;
+        width: auto;
+    }
+    .meta-prefix {
+        width: auto;
         color: $text-muted;
     }
     .deck-status-line {
         text-style: bold;
-        padding-top: 1;
         padding-bottom: 1;
     }
     .action-card {
         height: auto;
-        border: round $surface-lighten-2;
+        border: round $border-blurred;
         padding: 1 2;
         margin-bottom: 1;
+    }
+    .action-card:dark {
+        border: round $surface-lighten-2;
     }
     .action-card Button {
         min-width: 30;
         margin-bottom: 1;
-    }
-    .action-card .button-row {
-        height: auto;
-        margin-bottom: 1;
-    }
-    .action-card .button-row Button {
-        margin: 0 1 0 0;
     }
     .action-card .action-help {
         color: $text-muted;
@@ -130,12 +152,24 @@ class DeckDetailScreen(Screen):
             yield Button("◀ Back", id="back")
 
         with VerticalScroll(id="detail-body"):
-            yield Static(self._deck.url, classes="deck-meta")
-            yield Static(str(self._deck.local_path), classes="deck-meta")
-            yield Static(self._status_line(), classes="deck-status-line", id="status-line")
+            with Horizontal(classes="meta-row"):
+                yield Static("Remote repository: ", classes="meta-prefix")
+                yield _MetaLink(
+                    self._deck.url, on_open=self._open_remote_repository
+                )
+            with Horizontal(classes="meta-row"):
+                yield Static("Local folder: ", classes="meta-prefix")
+                yield _MetaLink(
+                    str(self._deck.local_path), on_open=self._open_local_folder
+                )
 
             # Download / Update card
             with Vertical(classes="action-card", id="download-card"):
+                yield Static(
+                    self._status_line(),
+                    classes="deck-status-line",
+                    id="status-line",
+                )
                 yield Button(self._download_label(), id="download", variant="primary")
                 yield Static(self._download_help(), classes="action-help", id="download-help")
 
@@ -149,29 +183,20 @@ class DeckDetailScreen(Screen):
 
             # Filtered decks card — always shown so the action is discoverable.
             with Vertical(classes="action-card", id="filtered-card"):
-                with Horizontal(classes="button-row"):
-                    yield Button(
-                        self._filtered_decks_button_label(),
-                        id="filtered",
-                        disabled=self._filtered_decks_disabled(),
-                    )
-                    yield Button(
-                        "Rebuild all",
-                        id="rebuild-filtered",
-                        disabled=self._filtered_decks_disabled(),
-                    )
+                yield Button(
+                    self._filtered_decks_button_label(),
+                    id="filtered",
+                    disabled=self._filtered_decks_disabled(),
+                )
+                yield Button(
+                    "Rebuild all",
+                    id="rebuild-filtered",
+                    disabled=self._filtered_decks_disabled(),
+                )
                 yield Static(
                     self._filtered_decks_help_text(),
                     classes="action-help",
                     id="filtered-help",
-                )
-
-            # Open folder card
-            with Vertical(classes="action-card", id="open-card"):
-                yield Button("Open deck folder", id="open-folder")
-                yield Static(
-                    "Show this deck's files on your computer in your file manager.",
-                    classes="action-help",
                 )
 
             yield LogPanel()
@@ -196,8 +221,10 @@ class DeckDetailScreen(Screen):
             )
         downloaded = f"Last downloaded: {_humanize(self._deck.last_pulled_at)}"
         if self._deck.status is DeckStatus.UPDATES_AVAILABLE:
-            return f"Status: {self._deck.updates_available} updates available · {downloaded} · {prepared}"
-        return f"Status: Up to date · {downloaded} · {prepared}"
+            status = f"Status: {self._deck.updates_available} updates available"
+        else:
+            status = "Status: Up to date"
+        return f"{status}\n{downloaded}\n{prepared}"
 
     def _download_label(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
@@ -264,14 +291,23 @@ class DeckDetailScreen(Screen):
             self._start_filtered_decks()
         elif bid == "rebuild-filtered":
             self._start_rebuild_filtered()
-        elif bid == "open-folder":
-            if not reveal_in_file_manager(self._deck.local_path):
-                self.app.notify(
-                    f"Couldn't open {self._deck.local_path}.", severity="warning"
-                )
 
     def action_back(self) -> None:
         self.app.pop_screen()
+
+    # ---------- meta-link clicks ---------- #
+
+    def _open_remote_repository(self) -> None:
+        self.app.open_url(self._deck.url)
+        self.app.notify(self._deck.url, title="Opened Link")
+
+    def _open_local_folder(self) -> None:
+        if reveal_in_file_manager(self._deck.local_path):
+            self.app.notify(str(self._deck.local_path), title="Opened Folder")
+        else:
+            self.app.notify(
+                f"Couldn't open {self._deck.local_path}.", severity="warning"
+            )
 
     # ---------- worker dispatch ---------- #
 
@@ -743,7 +779,7 @@ class DeckDetailScreen(Screen):
     # ---------- UI mutation helpers ---------- #
 
     def _set_action_buttons_enabled(self, enabled: bool) -> None:
-        for btn_id in ("download", "make", "filtered", "rebuild-filtered", "open-folder"):
+        for btn_id in ("download", "make", "filtered", "rebuild-filtered"):
             try:
                 btn = self.query_one(f"#{btn_id}", Button)
             except Exception:

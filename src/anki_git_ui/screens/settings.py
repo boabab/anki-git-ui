@@ -105,7 +105,7 @@ class SettingsScreen(Screen):
                         id=f"profile-{_safe_id(name)}",
                     )
                 yield RadioButton(
-                    "Choose a different file…",
+                    "Choose a different profile…",
                     value=has_override,
                     id=f"profile-{_CUSTOM_VALUE}",
                 )

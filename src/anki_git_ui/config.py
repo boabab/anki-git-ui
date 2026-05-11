@@ -92,17 +92,22 @@ def _from_dict(data: dict[str, Any]) -> Config:
 
 
 def _deck_from_dict(d: dict[str, Any]) -> DeckEntry:
+    last_pulled_commit = d.get("last_pulled_commit") or None
+    # We don't auto-check against the remote on launch (would block startup on
+    # every restart). If we've pulled the deck before, assume it's still UP_TO_DATE
+    # until the user explicitly hits "Check for updates".
+    status = DeckStatus.UP_TO_DATE if last_pulled_commit else DeckStatus.NOT_DOWNLOADED
     return DeckEntry(
         nickname=d["nickname"],
         url=d["url"],
         local_path=Path(d["local_path"]).expanduser(),
         branch=d.get("branch") or "main",
-        last_pulled_commit=d.get("last_pulled_commit") or None,
+        last_pulled_commit=last_pulled_commit,
         last_pulled_at=_dt_or_none(d.get("last_pulled_at")),
         last_built_commit=d.get("last_built_commit") or None,
         last_built_apkg=_path_or_none(d.get("last_built_apkg")),
         last_built_at=_dt_or_none(d.get("last_built_at")),
-        status=DeckStatus.UNKNOWN,
+        status=status,
     )
 
 
