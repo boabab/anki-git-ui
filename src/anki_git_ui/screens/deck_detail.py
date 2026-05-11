@@ -33,6 +33,7 @@ from ..workers.filtered_decks_worker import (
     FilteredDecksResult,
     RebuildFilteredDecksResult,
     apply_filtered_decks,
+    is_anki_desktop_running,
     is_locked_error,
     rebuild_filtered_decks,
 )
@@ -301,6 +302,11 @@ class DeckDetailScreen(Screen):
             )
 
     def _start_filtered_decks(self) -> None:
+        if is_anki_desktop_running():
+            self._show_locked_modal(
+                retry=self._start_filtered_decks, op_label="Filtered-decks setup"
+            )
+            return
         self._busy = True
         self._current_op = "filtered"
         log = self.query_one(LogPanel)
@@ -322,6 +328,11 @@ class DeckDetailScreen(Screen):
         )
 
     def _start_rebuild_filtered(self) -> None:
+        if is_anki_desktop_running():
+            self._show_locked_modal(
+                retry=self._start_rebuild_filtered, op_label="Rebuild"
+            )
+            return
         self._busy = True
         self._current_op = "rebuild"
         log = self.query_one(LogPanel)
@@ -425,9 +436,15 @@ class DeckDetailScreen(Screen):
             if apkg is not None:
                 self._show_ready_modal(apkg)
         elif op == "filtered" and isinstance(result, FilteredDecksResult):
-            self._on_filtered_decks_done(result)
+            if result.locked:
+                self._show_locked_modal(retry=self._start_filtered_decks, op_label="Filtered-decks setup")
+            else:
+                self._on_filtered_decks_done(result)
         elif op == "rebuild" and isinstance(result, RebuildFilteredDecksResult):
-            self._on_rebuild_filtered_done(result)
+            if result.locked:
+                self._show_locked_modal(retry=self._start_rebuild_filtered, op_label="Rebuild")
+            else:
+                self._on_rebuild_filtered_done(result)
         self._refresh_status_line()
 
     def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
@@ -552,6 +569,16 @@ class DeckDetailScreen(Screen):
                 details=f"{type(err).__name__}: {err}" if err else None,
             )
         )
+
+    def _show_locked_modal(self, *, retry, op_label: str) -> None:
+        log = self.query_one(LogPanel)
+        log.set_status(f"{op_label} paused — Anki is open.")
+
+        def _on_close(should_retry: bool | None) -> None:
+            if should_retry:
+                retry()
+
+        self.app.push_screen(AnkiLockedModal(), _on_close)
 
     def _handle_card_overrides(self) -> None:
         def _on_choice(confirmed: bool | None) -> None:

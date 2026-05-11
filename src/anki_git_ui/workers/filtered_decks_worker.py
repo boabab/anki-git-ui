@@ -7,6 +7,8 @@ shows the friendly :class:`AnkiLockedModal`.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,21 +26,57 @@ class FilteredDecksResult:
     skipped: list[str]
     conflicts: list[str]
     dry_run: bool
+    locked: bool = False
 
     @property
     def total(self) -> int:
         return len(self.created) + len(self.skipped) + len(self.conflicts)
 
 
-def is_locked_error(err: BaseException) -> bool:
-    """Detect the 'Anki is open / collection locked' RuntimeError pattern.
+def is_anki_desktop_running() -> bool:
+    """Best-effort check for whether the Anki desktop app is running locally.
 
-    Matches the substring ``"locked"`` in the message, which is what
-    ``anki_gitify.collection_io.open_collection`` surfaces. Future versions
-    of anki-gitify may use a more specific subclass; the substring contract
-    is what the API doc promises is forward-compatible.
+    The SDK's per-collection lock only fires when both processes touch the
+    *same* ``collection.anki2``. Writes to a *different* profile while Anki
+    desktop is open are unsafe too (media sync can race, the desktop may
+    overwrite on close), so we want a louder, profile-independent signal.
+
+    Uses ``pgrep`` to look for the Anki ``.app`` bundle or the bundled
+    ``aqt.run`` Python launcher. Returns False if pgrep is unavailable or
+    fails — the SDK lock check remains the authoritative backstop.
     """
-    return isinstance(err, RuntimeError) and "locked" in str(err).lower()
+    pgrep = shutil.which("pgrep")
+    if pgrep is None:
+        return False
+    try:
+        result = subprocess.run(
+            [pgrep, "-f", r"Anki\.app/Contents/MacOS|aqt\.run"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def is_locked_error(err: BaseException) -> bool:
+    """Detect 'Anki is open / collection locked / mid-sync' errors.
+
+    Matches multiple phrasings the Anki SDK (and anki-gitify's wrapper) use:
+    - ``"Anki already open"`` / ``"currently syncing"`` — the Rust backend's
+      top-level message when Anki desktop holds the collection. The exception
+      is ``anki.errors.DBError`` (a sibling of ``RuntimeError``, not a
+      subclass), so we deliberately don't ``isinstance``-check the type.
+    - ``"locked"`` / ``"database is locked"`` — anki-gitify's wrapped
+      ``RuntimeError`` and the raw SQLite-level error.
+    """
+    msg = str(err).lower()
+    return (
+        "locked" in msg
+        or "already open" in msg
+        or "currently syncing" in msg
+    )
 
 
 def apply_filtered_decks(
@@ -79,11 +117,20 @@ def apply_filtered_decks(
             "Applying filtered decks (dry run)…" if dry_run else "Applying filtered decks…"
         )
 
-    report = api.apply_filtered(
-        deck.local_path,
-        paths.collection,
-        dry_run=dry_run,
-    )
+    try:
+        report = api.apply_filtered(
+            deck.local_path,
+            paths.collection,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        if is_locked_error(exc):
+            if on_log is not None:
+                on_log("Anki is open — close it and try again.")
+            return FilteredDecksResult(
+                created=[], skipped=[], conflicts=[], dry_run=dry_run, locked=True,
+            )
+        raise
 
     if on_log is not None:
         on_log(
@@ -104,6 +151,7 @@ class RebuildFilteredDecksResult:
     rebuilt: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    locked: bool = False
 
     @property
     def total(self) -> int:
@@ -155,27 +203,34 @@ def rebuild_filtered_decks(
         on_log(f"Rebuilding {len(entries)} filtered deck(s)…")
 
     result = RebuildFilteredDecksResult()
-    with open_collection(paths.collection) as col:
-        for entry in entries:
-            name = entry.get("name") if isinstance(entry, dict) else None
-            if not isinstance(name, str):
-                continue
-            did = col.decks.id_for_name(name)
-            if did is None:
-                result.missing.append(name)
+    try:
+        with open_collection(paths.collection) as col:
+            for entry in entries:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                if not isinstance(name, str):
+                    continue
+                did = col.decks.id_for_name(name)
+                if did is None:
+                    result.missing.append(name)
+                    if on_log is not None:
+                        on_log(f"  ? {name} (not in your Anki yet)")
+                    continue
+                deck_obj = col.decks.get(did)
+                if int(deck_obj.get("dyn", 0)) != 1:
+                    result.conflicts.append(name)
+                    if on_log is not None:
+                        on_log(f"  ! {name} (a normal deck with this name — skipped)")
+                    continue
+                col.sched.rebuild_filtered_deck(did)
+                result.rebuilt.append(name)
                 if on_log is not None:
-                    on_log(f"  ? {name} (not in your Anki yet)")
-                continue
-            deck_obj = col.decks.get(did)
-            if int(deck_obj.get("dyn", 0)) != 1:
-                result.conflicts.append(name)
-                if on_log is not None:
-                    on_log(f"  ! {name} (a normal deck with this name — skipped)")
-                continue
-            col.sched.rebuild_filtered_deck(did)
-            result.rebuilt.append(name)
+                    on_log(f"  ✓ {name} (rebuilt)")
+    except Exception as exc:
+        if is_locked_error(exc):
             if on_log is not None:
-                on_log(f"  ✓ {name} (rebuilt)")
+                on_log("Anki is open — close it and try again.")
+            return RebuildFilteredDecksResult(locked=True)
+        raise
 
     if on_log is not None:
         on_log(
