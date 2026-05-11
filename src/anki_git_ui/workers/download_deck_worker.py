@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..domain.git_ops import (
     CloneProgress,
+    GitError,
     clone,
     head_branch,
     head_commit,
@@ -28,6 +29,7 @@ class DownloadResult:
     head_commit: str | None
     head_branch: str | None
     pulled_at: datetime
+    error: GitError | None = None
 
 
 def download_deck(
@@ -39,19 +41,33 @@ def download_deck(
     """Clone ``deck.url`` into ``deck.local_path`` and resolve HEAD.
 
     Mutates the passed ``deck`` in place — fills in ``branch``,
-    ``last_pulled_commit``, and ``last_pulled_at`` on success. Raises
-    :class:`anki_git_ui.domain.git_ops.GitError` (or a subclass) on failure;
-    the caller surfaces it as a friendly modal.
+    ``last_pulled_commit``, and ``last_pulled_at`` on success.
+
+    Friendly :class:`anki_git_ui.domain.git_ops.GitError` failures (bad URL,
+    private repo, network, etc.) are caught and returned via
+    ``DownloadResult.error`` so Textual treats the worker as successful and
+    doesn't dump a traceback. The caller checks ``result.error`` and
+    surfaces a modal.
     """
     if on_log is not None:
         on_log(f"git clone --progress {deck.url} {deck.local_path}")
 
-    clone(
-        deck.url,
-        deck.local_path,
-        on_line=on_log,
-        on_progress=on_progress,
-    )
+    try:
+        clone(
+            deck.url,
+            deck.local_path,
+            on_line=on_log,
+            on_progress=on_progress,
+        )
+    except GitError as exc:
+        if on_log is not None:
+            on_log(f"Clone failed: {exc}")
+        return DownloadResult(
+            head_commit=None,
+            head_branch=None,
+            pulled_at=datetime.now(timezone.utc),
+            error=exc,
+        )
 
     sha = head_commit(deck.local_path)
     branch = head_branch(deck.local_path)

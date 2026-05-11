@@ -10,7 +10,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, Static
+from textual.worker import Worker, WorkerState
 
+from ..domain.git_ops import GitError, verify_remote
 from ..domain.models import DeckEntry, DeckStatus
 from ..workers.download_deck_worker import deck_local_path, deck_nickname
 
@@ -69,6 +71,7 @@ class AddDeckScreen(Screen):
         self._url = ""
         self._nickname = ""
         self._local_path = ""
+        self._verifying = False
 
     # ---------- compose / render ---------- #
 
@@ -139,6 +142,8 @@ class AddDeckScreen(Screen):
     # ---------- event handlers ---------- #
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if self._verifying:
+            return
         bid = event.button.id
         if bid in ("cancel", "back-to-dashboard"):
             self.app.pop_screen()
@@ -152,8 +157,14 @@ class AddDeckScreen(Screen):
                 )
                 return
             self._url = url
-            self._step = 2
-            self._refresh()
+            self._verifying = True
+            self.app.notify("Checking the link…", timeout=2)
+            self.run_worker(
+                lambda: verify_remote(self._url),
+                thread=True,
+                exclusive=True,
+                group="add-deck-verify",
+            )
         elif bid == "prev":
             # Save edits to step-2 fields so they don't reset on Back.
             self._capture_step2()
@@ -203,8 +214,7 @@ class AddDeckScreen(Screen):
             )
             return
 
-        # Create the deck entry, persist, hand off to the deck-detail screen
-        # which kicks off the download.
+        # URL was already validated at step 1, so we can create + switch directly.
         deck = DeckEntry(
             nickname=nickname,
             url=self._url,
@@ -221,6 +231,28 @@ class AddDeckScreen(Screen):
         # Replace add-deck with the deck-detail screen so Back from there
         # goes to the dashboard, not back to the add wizard.
         self.app.switch_screen(DeckDetailScreen(deck=deck, auto_download=True))
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR):
+            return
+        self._verifying = False
+        if event.state == WorkerState.ERROR:
+            self.app.notify(
+                "We couldn't check that link.",
+                title="Link is not valid",
+                severity="error",
+            )
+            return
+        err: GitError | None = event.worker.result
+        if err is not None:
+            self.app.notify(
+                str(err),
+                title="Link is not valid",
+                severity="error",
+            )
+            return
+        self._step = 2
+        self._refresh()
 
 
 def _clone_self(screen: AddDeckScreen) -> AddDeckScreen:

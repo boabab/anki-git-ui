@@ -419,10 +419,16 @@ class DeckDetailScreen(Screen):
     def _on_worker_success(self, op: str | None, result) -> None:
         log = self.query_one(LogPanel)
         if op == "download":
+            if result is not None and result.error is not None:
+                self._handle_download_failed(result.error)
+                return
             self._deck.status = DeckStatus.UP_TO_DATE
             self.app.config.save()
             log.set_status("Download complete.")
         elif op == "update":
+            if result is not None and result.error is not None:
+                self._handle_update_failed(result.error)
+                return
             self._deck.status = DeckStatus.UP_TO_DATE
             self._deck.updates_available = 0
             self.app.config.save()
@@ -450,28 +456,11 @@ class DeckDetailScreen(Screen):
     def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
         log = self.query_one(LogPanel)
         if op == "download" and isinstance(err, GitError):
-            log.set_status("Download failed.")
-            # Roll back the entry — partial state confuses the dashboard.
-            if self._deck in self.app.app_state.decks:
-                self.app.app_state.decks.remove(self._deck)
-            if self._deck in self.app.config.decks:
-                self.app.config.decks.remove(self._deck)
-            self.app.config.save()
-
-            def _after(_: None) -> None:
-                self.app.pop_screen()
-
-            self.app.push_screen(
-                ErrorModal(title="We couldn't download the deck", body=str(err)),
-                _after,
-            )
+            self._handle_download_failed(err)
             return
 
         if op == "update" and isinstance(err, GitError):
-            log.set_status("Couldn't update the deck.")
-            self.app.push_screen(
-                ErrorModal(title="Couldn't update the deck", body=str(err))
-            )
+            self._handle_update_failed(err)
             return
 
         if op == "build" and isinstance(err, CardOverrideError):
@@ -568,6 +557,30 @@ class DeckDetailScreen(Screen):
                 "help you figure out what happened.",
                 details=f"{type(err).__name__}: {err}" if err else None,
             )
+        )
+
+    def _handle_download_failed(self, err: GitError) -> None:
+        log = self.query_one(LogPanel)
+        log.set_status("Download failed.")
+        # Roll back the deck entry — partial state confuses the dashboard.
+        if self._deck in self.app.app_state.decks:
+            self.app.app_state.decks.remove(self._deck)
+        if self._deck in self.app.config.decks:
+            self.app.config.decks.remove(self._deck)
+        self.app.config.save()
+
+        def _after(_: None) -> None:
+            self.app.pop_screen()
+
+        self.app.push_screen(
+            ErrorModal(title="We couldn't download the deck", body=str(err)),
+            _after,
+        )
+
+    def _handle_update_failed(self, err: GitError) -> None:
+        self.query_one(LogPanel).set_status("Couldn't update the deck.")
+        self.app.push_screen(
+            ErrorModal(title="Couldn't update the deck", body=str(err))
         )
 
     def _show_locked_modal(self, *, retry, op_label: str) -> None:

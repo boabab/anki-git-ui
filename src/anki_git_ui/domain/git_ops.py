@@ -77,6 +77,42 @@ class GitRepoNotFoundError(GitError):
     """Remote returned a 404 or similar — the URL doesn't point at a git repo."""
 
 
+# ---------- Remote verification ---------- #
+
+
+def verify_remote(url: str, *, timeout: float = 15.0) -> GitError | None:
+    """Check that ``url`` points to an accessible git remote.
+
+    Runs ``git ls-remote --exit-code <url>`` — a lightweight network probe
+    that doesn't create any local state. Returns ``None`` on success, or a
+    :class:`GitError` subclass (mapped via :func:`_classify_clone_error` so
+    the friendly message matches what a real clone would have produced).
+    """
+    git = shutil.which("git")
+    if git is None:
+        return GitNotFoundError(
+            "We need git to download decks, but it's not installed. Please install git "
+            "and try again."
+        )
+    try:
+        proc = subprocess.run(
+            [git, "ls-remote", "--exit-code", "--quiet", "--", url],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return GitNetworkError(
+            "Checking the link timed out. Please check your connection and try again."
+        )
+    except OSError as exc:
+        return GitError(f"Could not run git: {exc}")
+    if proc.returncode == 0:
+        return None
+    return _classify_clone_error(proc.stderr or proc.stdout, proc.returncode)
+
+
 # ---------- Streaming clone ---------- #
 
 

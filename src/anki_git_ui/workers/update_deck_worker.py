@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..domain.git_ops import fetch, head_branch, head_commit, pull_ff_only
+from ..domain.git_ops import GitError, fetch, head_branch, head_commit, pull_ff_only
 from ..domain.models import DeckEntry
 
 
@@ -20,6 +20,7 @@ class UpdateResult:
     head_branch: str | None
     pulled_at: datetime
     no_changes: bool
+    error: GitError | None = None
 
 
 def update_deck(
@@ -29,19 +30,30 @@ def update_deck(
 ) -> UpdateResult:
     """Fetch and fast-forward-pull ``deck.local_path``.
 
-    Raises :class:`anki_git_ui.domain.git_ops.GitError` (or a subclass) on
-    failure. The caller surfaces it as a friendly modal.
+    Friendly :class:`anki_git_ui.domain.git_ops.GitError` failures are
+    caught and returned via ``UpdateResult.error`` (so Textual doesn't
+    print a traceback). Caller checks ``result.error`` and shows a modal.
     """
     repo: Path = deck.local_path
-    if on_log is not None:
-        on_log(f"git -C {repo} fetch --prune")
-    fetch(repo, on_line=on_log)
-
     previous = deck.last_pulled_commit
+    try:
+        if on_log is not None:
+            on_log(f"git -C {repo} fetch --prune")
+        fetch(repo, on_line=on_log)
 
-    if on_log is not None:
-        on_log(f"git -C {repo} pull --ff-only")
-    pull_ff_only(repo, on_line=on_log)
+        if on_log is not None:
+            on_log(f"git -C {repo} pull --ff-only")
+        pull_ff_only(repo, on_line=on_log)
+    except GitError as exc:
+        if on_log is not None:
+            on_log(f"Update failed: {exc}")
+        return UpdateResult(
+            head_commit=None,
+            head_branch=None,
+            pulled_at=datetime.now(timezone.utc),
+            no_changes=False,
+            error=exc,
+        )
 
     sha = head_commit(repo)
     branch = head_branch(repo)
