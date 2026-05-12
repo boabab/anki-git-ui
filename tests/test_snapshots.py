@@ -7,6 +7,8 @@ or copy, regenerate with ``--snapshot-update``.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from anki_git_ui.domain.models import WelcomeChecks
@@ -82,6 +84,12 @@ def test_help_snapshot(make_app, snap_compare) -> None:
     assert snap_compare(app, terminal_size=(120, 40), run_before=kick)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="settings screen renders Path with native separators (backslashes on Windows); "
+    "the macOS/Linux snapshot intentionally uses POSIX style. UI layout regressions are "
+    "still caught by running this on the two POSIX runners.",
+)
 def test_settings_snapshot(make_app, snap_compare) -> None:
     async def kick(pilot) -> None:
         from textual.widgets import Button

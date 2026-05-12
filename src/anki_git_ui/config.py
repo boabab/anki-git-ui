@@ -153,12 +153,14 @@ def _deck_to_table(deck: DeckEntry):
 
 
 def _stringify_path(p: Path) -> str:
+    # as_posix() keeps the TOML file portable: a config written on Windows
+    # uses forward slashes and is readable verbatim on macOS/Linux.
     home = Path.home()
     try:
         rel = p.relative_to(home)
-        return str(Path("~") / rel)
+        return (Path("~") / rel).as_posix()
     except ValueError:
-        return str(p)
+        return p.as_posix()
 
 
 def _path_or_none(value: Any) -> Path | None:
