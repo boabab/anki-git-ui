@@ -1,5 +1,9 @@
 # Anki-Git-UI
 
+<p align="center">
+  <img src="docs/images/thumbnail.svg" alt="Anki-Git-UI" width="640"/>
+</p>
+
 A friendly terminal UI for [`anki-gitify`](https://github.com/boabab/anki-gitify): subscribe to Anki deck repositories on GitHub, prepare them as `.apkg` files, and import them into your local Anki collection.
 
 Built with [Textual](https://textual.textualize.io/) — runs in any modern terminal, mouse and keyboard.
