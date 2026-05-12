@@ -7,11 +7,35 @@ or copy, regenerate with ``--snapshot-update``.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from anki_git_ui.domain.models import WelcomeChecks
+
+
+@pytest.fixture(autouse=True)
+def frozen_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze ``datetime.now()`` so time-based UI strings are deterministic.
+
+    The dashboard renders ``_humanize(deck.last_pulled_at)`` against fixture
+    dates in ``make_mock_state``; without freezing, the rendered SVG drifts
+    every day. Frozen at 2026-05-12 00:00:00 UTC so:
+      - JLPT N5 (pulled 2026-05-08 14:22:01) → "3 days ago"
+      - Medical Anatomy (pulled 2026-05-10 09:00:00) → "1 day ago"
+    """
+    frozen = datetime(2026, 5, 12, 0, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    # humanize_age lives in domain.text_utils after the dedup refactor; dashboard
+    # still reads datetime.now() directly for its "Last refreshed" timestamp.
+    monkeypatch.setattr("anki_git_ui.domain.text_utils.datetime", _FrozenDateTime)
+    monkeypatch.setattr("anki_git_ui.screens.dashboard.datetime", _FrozenDateTime)
 
 
 @pytest.fixture(autouse=True)

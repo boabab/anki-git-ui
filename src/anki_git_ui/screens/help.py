@@ -33,43 +33,12 @@ _SHORTCUTS = (
 
 
 class HelpScreen(Screen):
-    DEFAULT_CSS = """
-    HelpScreen {
-        layout: vertical;
-    }
-    #help-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #help-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #help-bar Button {
-        margin: 0 0 0 1;
-    }
-    #help-body {
-        padding: 1 4;
-    }
-    .help-section-title {
-        text-style: bold;
-        color: $primary;
-        padding: 1 0 0 0;
-    }
-    .help-section-body {
-        padding-bottom: 1;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "back", "Back"),
     ]
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="help-bar"):
+        with Horizontal(id="help-bar", classes="app-bar"):
             yield Static("Help", classes="title")
             yield Button("◀ Back", id="back", variant="primary")
         with VerticalScroll(id="help-body"):

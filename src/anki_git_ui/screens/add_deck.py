@@ -20,48 +20,6 @@ from ..workers.download_deck_worker import deck_local_path, deck_nickname
 class AddDeckScreen(Screen):
     """Two-step add flow: paste link → name + folder → save and download."""
 
-    DEFAULT_CSS = """
-    AddDeckScreen {
-        layout: vertical;
-    }
-    #add-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #add-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #add-body {
-        padding: 1 4;
-    }
-    .step-heading {
-        text-style: bold;
-        color: $primary;
-        padding-bottom: 1;
-    }
-    .field-label {
-        padding: 1 0 0 0;
-    }
-    .field-help {
-        color: $text-muted;
-        padding-top: 1;
-        padding-bottom: 1;
-    }
-    #add-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #add-buttons Button {
-        margin-left: 2;
-        min-width: 14;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
     ]
@@ -77,7 +35,7 @@ class AddDeckScreen(Screen):
     # ---------- compose / render ---------- #
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="add-bar"):
+        with Horizontal(id="add-bar", classes="app-bar"):
             yield Static(f"Add a new community deck ({self._step} of 2)", classes="title")
             yield Button("◀ Back to dashboard", id="back-to-dashboard")
         if self._step == 1:

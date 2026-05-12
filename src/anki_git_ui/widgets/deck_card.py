@@ -7,71 +7,28 @@ screen; deletion happens from inside the detail view.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
 
 from ..domain.models import DeckEntry, DeckStatus, status_label
-
-
-def _humanize(dt: datetime | None, fallback: str = "never") -> str:
-    if dt is None:
-        return fallback
-    delta = datetime.now(timezone.utc) - (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
-    secs = int(delta.total_seconds())
-    if secs < 60:
-        return "just now"
-    if secs < 3600:
-        return f"{secs // 60} minute{'s' if secs >= 120 else ''} ago"
-    if secs < 86400:
-        return f"{secs // 3600} hour{'s' if secs >= 7200 else ''} ago"
-    days = secs // 86400
-    return f"{days} day{'s' if days != 1 else ''} ago"
+from ..domain.text_utils import humanize_age
 
 
 def _detail_line(deck: DeckEntry) -> str:
     label = status_label(deck.status, count=deck.updates_available)
     if deck.status is DeckStatus.NOT_DOWNLOADED:
         return label
-    last = _humanize(deck.last_pulled_at, fallback="never")
+    last = humanize_age(deck.last_pulled_at, fallback="never")
     return f"{label} · last downloaded {last}"
 
 
 class DeckCard(Vertical):
     """A single deck row, shown as a card with two action buttons."""
 
-    DEFAULT_CSS = """
-    DeckCard {
-        height: auto;
-        border: round $panel-darken-1;
-        padding: 1 2;
-        margin-bottom: 1;
-    }
-    DeckCard:dark {
-        border: round $surface-lighten-2;
-    }
-    /* Header is title + detail line as a single block on the left, with the
-       Open button on the right spanning the full block height. */
-    DeckCard .deck-header {
-        height: 3;
-        width: 1fr;
-    }
-    DeckCard .deck-text {
-        width: 1fr;
-        height: auto;
-    }
-    DeckCard .deck-title {
-        text-style: bold;
-        color: $primary;
-        margin-bottom: 1;
-    }
-    DeckCard .deck-detail {
-        color: $text-muted;
-    }
-    """
+    DEFAULT_CLASSES = "card"
 
     class Open(Message):
         def __init__(self, nickname: str) -> None:
@@ -99,8 +56,8 @@ class DeckCard(Vertical):
         refresh so cards reflect the new status without a recompose."""
         try:
             self.query_one(".deck-detail", Static).update(_detail_line(self._deck))
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug(".deck-detail not in DOM during refresh")
 
 
 def _slug(text: str) -> str:

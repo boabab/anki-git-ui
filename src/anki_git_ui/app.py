@@ -21,95 +21,13 @@ class AnkiGitUIApp(App):
     TITLE = "Anki Community Deck Sync"
     SUB_TITLE = ""
 
-    CSS = """
-    .title {
-        height: 3;
-        content-align: left middle;
-    }
-
-    Screen {
-        background: $surface;
-    }
-
-    /* Project-wide Button styling.
-       - `border: none` instead of Textual's default `tall`. The tall border
-         relies on ▊ (LEFT SEVEN EIGHTHS BLOCK) for the left edge, which
-         renders as transparent on some terminal fonts (notably macOS
-         Terminal.app's default), making buttons look like their left edge
-         is "cut off". A no-border button is just a colored rectangle —
-         visible everywhere, no font-rendering surprises.
-       - The button's background is $panel — distinct from $surface so it
-         reads as a clickable element against the screen background even
-         in light mode without needing a border at all.
-       - :focus only bolds the label. Coloring the border on focus made the
-         "previously clicked" button look like it stayed orange when the
-         user came back to the screen, because Textual restores focus on
-         screen pop. */
-    Button {
-        height: 3;
-        min-width: 14;
-        border: none;
-        padding: 0 2;
-        background: $panel;
-        color: $foreground;
-    }
-    Button:hover {
-        background: $primary 30%;
-    }
-    Button:focus {
-        text-style: bold;
-    }
-    Button:disabled {
-        text-opacity: 40%;
-        background-tint: $surface 30%;
-    }
-
-    Button.-primary {
-        background: $primary;
-        color: white;
-        text-style: bold;
-    }
-    Button.-primary:hover {
-        background: $primary-lighten-1;
-    }
-
-    Button.-error {
-        background: $error;
-        color: white;
-        text-style: bold;
-    }
-    Button.-error:hover {
-        background: $error-lighten-1;
-    }
-
-    /* Inline header buttons — sized just wide enough to fit the label
-       (Textual adds `line-pad: 1` on Button, stealing 2 cells beyond our
-       padding). Height stays 3 so the button reads as a proper button; the
-       title widget alongside is set to height 3 + middle-aligned in CSS so
-       the label visually sits next to the button on its middle row. */
-    #refresh-updates, #refresh-decks {
-        min-width: 15;
-        width: 15;
-    }
-    DeckCard #open {
-        min-width: 10;
-        width: 10;
-    }
-
-    /* Input / RadioSet borders: match the card/log-panel grays.
-       - light mode: $panel-darken-1 (darker than surface)
-       - dark mode:  $surface-lighten-2 (lighter than surface)
-       Focus uses $primary so an active field still pops. */
-    Input, RadioSet {
-        border: tall $panel-darken-1;
-    }
-    Input:dark, RadioSet:dark {
-        border: tall $surface-lighten-2;
-    }
-    Input:focus, RadioSet:focus {
-        border: tall $primary;
-    }
-    """
+    CSS_PATH = [
+        "styles/app.tcss",
+        "styles/components.tcss",
+        "styles/widgets.tcss",
+        "styles/screens.tcss",
+        "styles/modals.tcss",
+    ]
 
     SCREENS = {
         "welcome": WelcomeScreen,
