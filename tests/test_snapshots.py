@@ -7,6 +7,8 @@ or copy, regenerate with ``--snapshot-update``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from anki_git_ui.domain.models import WelcomeChecks
@@ -48,8 +50,6 @@ def stable_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     Without this, the snapshot picks up whichever Anki profiles exist on the
     dev machine (or none, on a fresh CI runner), so the rendered SVG drifts.
     """
-    from pathlib import Path
-
     monkeypatch.setattr(
         "anki_git_ui.screens.settings.detect_profiles",
         lambda: (Path("/home/user/.local/share/Anki2"), ["User 1"]),
@@ -65,9 +65,8 @@ def stable_path_format(monkeypatch: pytest.MonkeyPatch) -> None:
     in POSIX form, so we patch every consumer's bound name to keep the runners
     in agreement without changing user-visible behavior.
     """
-    posix = lambda p: p.as_posix()
-    monkeypatch.setattr("anki_git_ui.screens.settings.format_path", posix)
-    monkeypatch.setattr("anki_git_ui.screens.deck_detail.format_path", posix)
+    monkeypatch.setattr("anki_git_ui.screens.settings.format_path", Path.as_posix)
+    monkeypatch.setattr("anki_git_ui.screens.deck_detail.format_path", Path.as_posix)
 
 
 def test_dashboard_snapshot(make_app, snap_compare) -> None:
