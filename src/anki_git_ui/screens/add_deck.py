@@ -48,6 +48,7 @@ class AddDeckScreen(Screen):
     }
     .field-help {
         color: $text-muted;
+        padding-top: 1;
         padding-bottom: 1;
     }
     #add-buttons {
@@ -77,7 +78,7 @@ class AddDeckScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="add-bar"):
-            yield Static(f"Add a new deck ({self._step} of 2)", classes="title")
+            yield Static(f"Add a new community deck ({self._step} of 2)", classes="title")
             yield Button("◀ Back to dashboard", id="back-to-dashboard")
         if self._step == 1:
             yield from self._compose_step1()

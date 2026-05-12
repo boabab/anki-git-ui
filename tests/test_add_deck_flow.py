@@ -76,15 +76,16 @@ async def test_remove_deck_cancel_keeps_deck(make_app) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         starting_count = len(app.app_state.decks)
-        # Open the remove modal for the first deck via the DeckCard's button.
-        first_card_remove = app.screen.query("DeckCard Button#remove").first(Button)
-        first_card_remove.press()
+        # Open the deck detail screen, then click Remove there.
+        app.screen.query("DeckCard Button#open").first(Button).press()
+        await pilot.pause()
+        app.screen.query_one("#remove-deck", Button).press()
         await pilot.pause()
         assert isinstance(app.screen, RemoveDeckModal)
         # Cancel
         app.screen.query_one("#cancel", Button).press()
         await pilot.pause()
-        assert isinstance(app.screen, DashboardScreen)
+        # Back on deck detail, deck still in the list.
         assert len(app.app_state.decks) == starting_count
 
 
@@ -94,12 +95,14 @@ async def test_remove_deck_confirm_drops_from_list(make_app) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         starting_count = len(app.app_state.decks)
-        first_card_remove = app.screen.query("DeckCard Button#remove").first(Button)
-        first_card_remove.press()
+        app.screen.query("DeckCard Button#open").first(Button).press()
+        await pilot.pause()
+        app.screen.query_one("#remove-deck", Button).press()
         await pilot.pause()
         # Confirm without checking "delete files".
         app.screen.query_one("#remove", Button).press()
         await pilot.pause()
+        # Detail screen pops; we land back on the dashboard with one fewer deck.
         assert isinstance(app.screen, DashboardScreen)
         assert len(app.app_state.decks) == starting_count - 1
 

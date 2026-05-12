@@ -146,7 +146,7 @@ def _classify_clone_error(stderr: str, returncode: int) -> GitError:
     if "authentication failed" in text or "could not read username" in text or "permission denied (publickey)" in text:
         return GitAuthError(
             "We couldn't download this deck. It looks like the repository is private — "
-            "Anki Deck Sync only supports public deck links right now."
+            "Anki Community Deck Sync only supports public deck links right now."
         )
     if "could not resolve host" in text or "could not connect" in text or "operation timed out" in text:
         return GitNetworkError(
@@ -407,6 +407,68 @@ def head_commit(repo: Path) -> str | None:
     if proc.returncode != 0:
         return None
     return proc.stdout.strip() or None
+
+
+@dataclass
+class Commit:
+    """One commit from :func:`recent_commits` — full sha kept so callers can
+    cross-reference against ``last_pulled_commit`` to detect new commits."""
+
+    sha: str       # full 40-char sha
+    short: str     # 7-char short sha
+    date: str
+    subject: str
+
+    @property
+    def display(self) -> str:
+        return f"{self.short}  {self.date}  {self.subject}"
+
+
+# Unit Separator — safe field delimiter for commit subjects that may contain
+# anything (including tabs, brackets, etc).
+_COMMIT_SEP = "\x1f"
+
+
+def recent_commits(
+    repo: Path,
+    *,
+    ref: str = "HEAD",
+    limit: int = 20,
+) -> list[Commit]:
+    """Return :class:`Commit` objects for the last ``limit`` commits on ``ref``.
+
+    Used by the "check for updates" panel — runs ``git log -<limit>`` on ``ref``
+    (typically ``origin/<branch>``). Returns an empty list on any error.
+    """
+    git = shutil.which("git")
+    if git is None or not (repo / ".git").exists():
+        return []
+    fmt = _COMMIT_SEP.join(["%H", "%h", "%ad", "%s"])
+    proc = subprocess.run(
+        [
+            git, "-C", str(repo),
+            "log", f"-{limit}",
+            f"--pretty=format:{fmt}",
+            "--date=short",
+            ref,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    out: list[Commit] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(_COMMIT_SEP, 3)
+        if len(parts) != 4:
+            continue
+        sha, short, date, subject = parts
+        out.append(Commit(sha=sha, short=short, date=date, subject=subject))
+    return out
 
 
 def head_branch(repo: Path) -> str | None:

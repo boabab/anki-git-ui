@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Static
+from textual.widgets import Button, Static
 
 
 # ---------- ConfirmModal ---------- #
@@ -84,13 +84,15 @@ class ConfirmModal(ModalScreen[bool]):
 
 @dataclass
 class RemoveDeckResult:
-    """Returned via dismiss when the user confirms removal."""
+    """Returned via dismiss when the user confirms removal.
 
-    delete_files: bool
+    Kept as a dataclass for future-proofing even though it currently has no
+    fields — the modal always deletes the files now.
+    """
 
 
 class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
-    """Confirm removing a deck. Separates 'remove from list' from 'delete files'.
+    """Confirm removing a deck. Always deletes the local files on confirm.
 
     Returns ``None`` on cancel, or :class:`RemoveDeckResult` on confirm.
     """
@@ -116,14 +118,6 @@ class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
     }
     .remove-path {
         color: $text-muted;
-        padding-bottom: 1;
-    }
-    #delete-row {
-        padding-bottom: 1;
-    }
-    .delete-help {
-        color: $text-muted;
-        padding-left: 4;
         padding-bottom: 1;
     }
     .remove-foot {
@@ -153,21 +147,11 @@ class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
         with Vertical(id="remove-card"):
             yield Static(f'Remove "{self._nickname}"?', classes="remove-title")
             yield Static(
-                "We'll remove this deck from your list in this app.",
+                "We'll remove this deck from your list and delete its files "
+                "from your computer:",
                 classes="remove-body",
             )
-            yield Static("The deck files on your computer:", classes="remove-body")
             yield Static(f"  {self._local_path}", classes="remove-path")
-            yield Checkbox(
-                "Also delete the deck files from my computer",
-                value=False,
-                id="delete-files",
-            )
-            yield Static(
-                "Leave unchecked to keep the files; you can re-add the deck later "
-                "by adding the same link.",
-                classes="delete-help",
-            )
             yield Static(
                 "The .apkg file you already prepared (if any) won't be touched. "
                 "Cards already imported into Anki stay in Anki — this app does not "
@@ -182,83 +166,7 @@ class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
         if event.button.id == "cancel":
             self.dismiss(None)
         elif event.button.id == "remove":
-            delete = self.query_one("#delete-files", Checkbox).value
-            self.dismiss(RemoveDeckResult(delete_files=delete))
-
-
-# ---------- AnkiFileReadyModal ---------- #
-
-
-class AnkiFileReadyModal(ModalScreen[str | None]):
-    """Shown after a successful "Make Anki file" build.
-
-    Returns one of: ``"open"`` (open with default app), ``"reveal"`` (show
-    in file manager), or ``None`` (Done).
-    """
-
-    DEFAULT_CSS = """
-    AnkiFileReadyModal {
-        align: center middle;
-    }
-    #ready-card {
-        width: 80;
-        height: auto;
-        background: $surface;
-        border: round $success;
-        padding: 2 3;
-    }
-    .ready-title {
-        text-style: bold;
-        color: $success;
-        padding-bottom: 1;
-    }
-    .ready-body {
-        padding-bottom: 1;
-    }
-    .ready-path {
-        color: $text-muted;
-        padding: 0 0 1 2;
-    }
-    #ready-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #ready-buttons Button {
-        margin-left: 2;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss(None)", "Done", show=False),
-    ]
-
-    def __init__(self, *, apkg_path: Path) -> None:
-        super().__init__()
-        self._apkg_path = apkg_path
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="ready-card"):
-            yield Static("Anki file is ready!", classes="ready-title")
-            yield Static("We saved the file at:", classes="ready-body")
-            yield Static(str(self._apkg_path), classes="ready-path")
-            yield Static(
-                "To finish, open Anki and use File → Import on this file.",
-                classes="ready-body",
-            )
-            with Horizontal(id="ready-buttons"):
-                yield Button("Show file", id="reveal")
-                yield Button("Open in Anki", id="open")
-                yield Button("Done", id="done", variant="primary")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "open":
-            self.dismiss("open")
-        elif bid == "reveal":
-            self.dismiss("reveal")
-        else:
-            self.dismiss(None)
+            self.dismiss(RemoveDeckResult())
 
 
 # ---------- AnkiLockedModal ---------- #

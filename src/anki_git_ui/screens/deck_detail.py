@@ -1,8 +1,10 @@
 """Deck detail screen — the screen the user spends most time on.
 
-Hosts the three primary actions (Download updates / Make Anki file / Set up
-filtered decks) and the streaming activity log. All long-running calls run
-in threaded workers; modal flows for success, error, and Anki-locked cases.
+Hosts the primary actions (Download changes / Set up filtered decks) and the
+streaming activity log. Downloads automatically chain into an Anki-file
+build; the build result (clickable apkg path + "Open in Anki" button) is
+surfaced inside the LogPanel. A top-of-screen UpdatesPanel fetches the
+remote and lists recent commits so the user can see what's available.
 """
 
 from __future__ import annotations
@@ -20,13 +22,14 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 from yaml import YAMLError, safe_load
 
-from ..domain.apkg_paths import (
-    open_with_default_app,
-    reveal_in_file_manager,
-)
+from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
+from ..domain.deck_ops import delete_deck_files
+from ..domain.text_utils import truncate
 from ..domain.git_ops import CloneProgress, GitError
 from ..domain.models import DeckEntry, DeckStatus
 from ..widgets.log_panel import LogPanel
+from ..widgets.updates_panel import UpdatesPanel
+from ..workers.check_updates_worker import CheckUpdatesResult, check_for_updates
 from ..workers.download_deck_worker import download_deck
 from ..workers.make_apkg_worker import make_apkg
 from ..workers.filtered_decks_worker import (
@@ -38,7 +41,7 @@ from ..workers.filtered_decks_worker import (
     rebuild_filtered_decks,
 )
 from ..workers.update_deck_worker import update_deck
-from .modals import AnkiFileReadyModal, AnkiLockedModal, ConfirmModal, ErrorModal
+from .modals import AnkiLockedModal, ConfirmModal, ErrorModal, RemoveDeckModal, RemoveDeckResult
 
 
 def _humanize(dt: datetime | None) -> str:
@@ -57,11 +60,15 @@ def _humanize(dt: datetime | None) -> str:
 
 
 class _MetaLink(Static):
-    """The clickable link/path inside a meta row — hover-underlined, not the whole line."""
+    """The clickable link/path inside a meta row — hover-underlined, not the whole line.
+
+    Truncates itself with `…` if its allotted width can't fit the full text,
+    so the row stays one line tall regardless of URL/path length.
+    """
 
     DEFAULT_CSS = """
     _MetaLink {
-        width: auto;
+        width: 1fr;
         color: $text-muted;
     }
     _MetaLink:hover {
@@ -71,8 +78,24 @@ class _MetaLink(Static):
     """
 
     def __init__(self, text: str, *, on_open: Callable[[], None], **kwargs) -> None:
-        super().__init__(text, **kwargs)
+        super().__init__("", **kwargs)
         self._on_open = on_open
+        self._full_text = text
+
+    def on_mount(self) -> None:
+        self._refresh_display()
+
+    def on_resize(self, _) -> None:
+        self._refresh_display()
+
+    def update(self, renderable="") -> None:
+        # Called by external code (e.g. _show_build_result) to swap the link.
+        self._full_text = str(renderable)
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        width = self.size.width
+        super().update(truncate(self._full_text, width) if width > 0 else self._full_text)
 
     def on_click(self) -> None:
         self._on_open()
@@ -98,15 +121,24 @@ class DeckDetailScreen(Screen):
         margin: 0 0 0 1;
     }
     #detail-body {
-        padding: 1 4;
+        padding: 1 2 1 4;
+    }
+    #detail-body > * {
+        margin-right: 2;
     }
     .meta-row {
         height: 1;
-        width: auto;
+        width: 1fr;
     }
+    /* Fixed-width prefix so "Remote repository:", "Local folder:", and
+       "Anki deck file:" all line up vertically and the links share a left edge. */
     .meta-prefix {
-        width: auto;
+        width: 20;
         color: $text-muted;
+    }
+    .card-title {
+        text-style: bold;
+        padding-bottom: 1;
     }
     .deck-status-line {
         text-style: bold;
@@ -114,7 +146,7 @@ class DeckDetailScreen(Screen):
     }
     .action-card {
         height: auto;
-        border: round $border-blurred;
+        border: round $panel-darken-1;
         padding: 1 2;
         margin-bottom: 1;
     }
@@ -131,6 +163,18 @@ class DeckDetailScreen(Screen):
     .action-card.disabled .action-help {
         color: $text-muted 50%;
     }
+    #apkg-row {
+        display: none;
+    }
+    DeckDetailScreen.has-build #apkg-row {
+        display: block;
+    }
+    #download-card .build-row {
+        display: none;
+    }
+    DeckDetailScreen.has-build #download-card .build-row {
+        display: block;
+    }
     """
 
     BINDINGS = [
@@ -142,7 +186,13 @@ class DeckDetailScreen(Screen):
         self._deck = deck
         self._auto_download = auto_download
         self._busy = False
-        self._current_op: str | None = None  # "download" | "update" | "build"
+        # "download" | "update" | "build" | "filtered" | "rebuild" | "check"
+        self._current_op: str | None = None
+        # Track whether we should chain a build after the next download/update.
+        self._chain_build: bool = False
+        # Path of the most recently built .apkg — used by the "Open in Anki"
+        # button and the clickable link inside the download card.
+        self._apkg_path: Path | None = None
 
     # ---------- compose ---------- #
 
@@ -152,34 +202,41 @@ class DeckDetailScreen(Screen):
             yield Button("◀ Back", id="back")
 
         with VerticalScroll(id="detail-body"):
-            with Horizontal(classes="meta-row"):
-                yield Static("Remote repository: ", classes="meta-prefix")
-                yield _MetaLink(
-                    self._deck.url, on_open=self._open_remote_repository
-                )
-            with Horizontal(classes="meta-row"):
-                yield Static("Local folder: ", classes="meta-prefix")
-                yield _MetaLink(
-                    str(self._deck.local_path), on_open=self._open_local_folder
-                )
+            with Vertical(classes="action-card", id="links-card"):
+                yield Static("Click to open", classes="card-title")
+                with Horizontal(classes="meta-row"):
+                    yield Static("Remote repository: ", classes="meta-prefix")
+                    yield _MetaLink(
+                        self._deck.url, on_open=self._open_remote_repository
+                    )
+                with Horizontal(classes="meta-row"):
+                    yield Static("Local folder: ", classes="meta-prefix")
+                    yield _MetaLink(
+                        str(self._deck.local_path),
+                        on_open=self._open_local_folder,
+                    )
+                with Horizontal(classes="meta-row", id="apkg-row"):
+                    yield Static("Anki deck file: ", classes="meta-prefix")
+                    yield _MetaLink(
+                        "", on_open=self._reveal_apkg, id="apkg-link"
+                    )
 
-            # Download / Update card
+            yield UpdatesPanel(id="updates-panel")
+
+            # Download / Update card — also auto-builds the .apkg on success.
             with Vertical(classes="action-card", id="download-card"):
                 yield Static(
                     self._status_line(),
                     classes="deck-status-line",
                     id="status-line",
                 )
-                yield Button(self._download_label(), id="download", variant="primary")
-                yield Static(self._download_help(), classes="action-help", id="download-help")
-
-            # Make Anki file card
-            with Vertical(classes="action-card", id="make-card"):
-                yield Button("Make Anki file", id="make")
-                yield Static(
-                    "Prepare a deck file you can open in Anki.",
-                    classes="action-help",
+                yield Button(self._download_label(), id="download")
+                yield Button(
+                    "(Re)import deck to Anki",
+                    id="open-in-anki",
+                    classes="build-row",
                 )
+                yield Static(self._download_help(), classes="action-help", id="download-help")
 
             # Filtered decks card — always shown so the action is discoverable.
             with Vertical(classes="action-card", id="filtered-card"):
@@ -189,7 +246,7 @@ class DeckDetailScreen(Screen):
                     disabled=self._filtered_decks_disabled(),
                 )
                 yield Button(
-                    "Rebuild all",
+                    "Rebuild all (apply filters)",
                     id="rebuild-filtered",
                     disabled=self._filtered_decks_disabled(),
                 )
@@ -201,42 +258,63 @@ class DeckDetailScreen(Screen):
 
             yield LogPanel()
 
+            # Remove this deck — destructive, lives at the bottom of the screen.
+            with Vertical(classes="action-card", id="remove-card"):
+                yield Button(
+                    "Remove this deck", id="remove-deck", variant="error"
+                )
+                yield Static(
+                    "Remove this deck from your list and delete its files "
+                    "from your computer.",
+                    classes="action-help",
+                )
+
     def on_mount(self) -> None:
+        # If we've previously built an apkg for this deck, surface it right
+        # away so the user can re-open it without re-downloading. Don't scroll
+        # to it here — we scroll the download card to the top instead, so the
+        # primary action is the first thing the user sees.
+        if self._deck.last_built_apkg is not None and self._deck.last_built_apkg.exists():
+            self._show_build_result(self._deck.last_built_apkg, scroll=False)
+        self._refresh_button_variants()
+        # Land on the download card after the first layout pass — the
+        # links/updates context lives one scroll up.
+        self.call_after_refresh(self._scroll_to_download_card)
+
         if self._auto_download:
             self._start_download(initial=True)
+        elif self._deck.status is not DeckStatus.NOT_DOWNLOADED:
+            # Background fetch so the UpdatesPanel reflects the remote on
+            # arrival — doesn't block any user-initiated action.
+            self._start_check_updates()
+        else:
+            self.query_one(UpdatesPanel).set_status(
+                "Download the deck first to see its commit history."
+            )
 
     # ---------- helpers / labels ---------- #
 
     def _status_line(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
             return "Status: Not downloaded yet"
-        if self._deck.last_built_commit is None:
-            prepared = "Last prepared: never"
-        elif self._deck.last_built_commit == self._deck.last_pulled_commit:
-            prepared = f"Last prepared: {_humanize(self._deck.last_built_at)} (same version)"
-        else:
-            prepared = (
-                f"Last prepared: {_humanize(self._deck.last_built_at)} "
-                "(an older version — make a new Anki file to refresh)"
-            )
-        downloaded = f"Last downloaded: {_humanize(self._deck.last_pulled_at)}"
+        downloaded = f"Last download: {_humanize(self._deck.last_pulled_at)}"
         if self._deck.status is DeckStatus.UPDATES_AVAILABLE:
             status = f"Status: {self._deck.updates_available} updates available"
         else:
             status = "Status: Up to date"
-        return f"{status}\n{downloaded}\n{prepared}"
+        return f"{status}\n{downloaded}"
 
     def _download_label(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
             return "Download deck"
-        if self._deck.status is DeckStatus.UPDATES_AVAILABLE:
-            return "Download updates"
-        return "Check for updates"
+        return "Download latest updates"
 
     def _download_help(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
-            return "Save a copy of this deck onto your computer."
-        return "Save the latest version of this deck onto your computer."
+            return "Save a copy of this deck onto your computer and prepare an Anki deck file."
+        return (
+            "Pull the latest updates from the remote and import the latest Anki deck file."
+        )
 
     def _filtered_decks_count(self) -> int:
         path = self._deck.local_path / "filtered_decks.yml"
@@ -259,13 +337,26 @@ class DeckDetailScreen(Screen):
 
     def _filtered_decks_help_text(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
-            return "Download this deck first to see whether it includes filtered-deck definitions."
+            return (
+                "Filtered decks are saved searches that build focused review "
+                "sessions (e.g. only due cards, or only cards with a given tag). "
+                "Download this deck first to see whether it ships with any."
+            )
         if self._filtered_decks_count() == 0:
-            return "This deck doesn't include any filtered-deck definitions."
+            return (
+                "This deck doesn't ship with any filtered-deck definitions, so "
+                "there's nothing to set up here."
+            )
         return (
-            "This deck includes special review settings. Use 'Set up' to add them "
-            "to your Anki collection, or 'Rebuild all' to refresh the cards inside "
-            "existing filtered decks. Anki must be closed first."
+            "This deck ships with filtered-deck definitions — saved searches "
+            "that build focused review sessions.\n"
+            "\n"
+            "\"Set up filtered decks\" adds them to your Anki collection.\n"
+            "\n"
+            "\"Rebuild all\" refreshes the cards inside the "
+            "existing ones to match the latest deck contents.\n"
+            "\n"
+            "Anki must be closed first."
         )
 
     def _filtered_decks_disabled(self) -> bool:
@@ -274,23 +365,43 @@ class DeckDetailScreen(Screen):
     # ---------- buttons ---------- #
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if self._busy and event.button.id != "back":
+        bid = event.button.id
+        # The "Open in Anki" button stays usable during operations — it just
+        # opens a previously built file and doesn't touch deck state.
+        if bid == "open-in-anki":
+            self._open_in_anki()
+            return
+        if self._busy and bid != "back":
             self.app.notify(
                 "Please wait for the current task to finish.", severity="information"
             )
             return
-        bid = event.button.id
         if bid == "back":
             self.app.pop_screen()
         elif bid == "download":
             initial = self._deck.status is DeckStatus.NOT_DOWNLOADED
             self._start_download(initial=initial)
-        elif bid == "make":
-            self._start_make_apkg()
         elif bid == "filtered":
             self._start_filtered_decks()
         elif bid == "rebuild-filtered":
             self._start_rebuild_filtered()
+        elif bid == "remove-deck":
+            self._start_remove_deck()
+
+    def on_updates_panel_refresh_requested(
+        self, _: UpdatesPanel.RefreshRequested
+    ) -> None:
+        if self._busy:
+            self.app.notify(
+                "Please wait for the current task to finish.", severity="information"
+            )
+            return
+        if self._deck.status is DeckStatus.NOT_DOWNLOADED:
+            self.query_one(UpdatesPanel).set_status(
+                "Download the deck first to see its commit history."
+            )
+            return
+        self._start_check_updates()
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -314,13 +425,19 @@ class DeckDetailScreen(Screen):
     def _start_download(self, *, initial: bool) -> None:
         self._busy = True
         self._current_op = "download" if initial else "update"
+        self._chain_build = True
         log = self.query_one(LogPanel)
         log.clear()
         log.set_status(
-            "Downloading…" if initial else "Checking for updates and downloading…"
+            "Downloading…" if initial else "Downloading latest version…"
         )
         log.set_progress(0, phase="Connecting")
+        self._hide_build_result()
         self._set_action_buttons_enabled(False)
+        self.app.notify(
+            "Downloading the deck…" if initial else "Downloading the latest version…",
+            title="Started",
+        )
 
         if initial:
             self.run_worker(
@@ -336,6 +453,24 @@ class DeckDetailScreen(Screen):
                 exclusive=True,
                 group="deck-actions",
             )
+
+    def _start_check_updates(self) -> None:
+        # Background, informational. Don't touch _busy / action-button enabled
+        # state — the user should be able to keep clicking buttons while the
+        # fetch happens, and disabling them visibly flashes the buttons grey
+        # for a moment after the screen mounts.
+        panel = self.query_one(UpdatesPanel)
+        panel.set_status("Checking for updates…")
+        self.run_worker(
+            self._do_check_updates,
+            thread=True,
+            exclusive=True,
+            group="deck-actions",
+            name="check-updates",
+        )
+
+    def _do_check_updates(self) -> CheckUpdatesResult:
+        return check_for_updates(self._deck, on_log=self._on_log)
 
     def _start_filtered_decks(self) -> None:
         if is_anki_desktop_running():
@@ -389,20 +524,14 @@ class DeckDetailScreen(Screen):
             on_log=self._on_log,
         )
 
-    def _start_make_apkg(self) -> None:
-        if self._deck.status is DeckStatus.NOT_DOWNLOADED:
-            self.app.notify(
-                "Download the deck first before making an Anki file.",
-                title="Not downloaded yet",
-                severity="warning",
-            )
-            return
+    def _start_chained_build(self) -> None:
+        """Auto-build the .apkg after a successful download/update."""
         self._busy = True
         self._current_op = "build"
         log = self.query_one(LogPanel)
-        log.clear()
         log.set_status("Preparing Anki file…")
         self._set_action_buttons_enabled(False)
+        self.app.notify("Preparing the Anki file…", title="Building")
         self.run_worker(
             self._do_make_apkg,
             thread=True,
@@ -440,6 +569,15 @@ class DeckDetailScreen(Screen):
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR):
             return
+        # Background check runs without touching _busy / button state — route
+        # it past the standard "deck action completed" bookkeeping.
+        if event.worker.name == "check-updates":
+            if event.state == WorkerState.SUCCESS:
+                self._on_worker_success("check", event.worker.result)
+            else:
+                self._on_worker_error("check", event.worker.error)
+            return
+
         op = self._current_op
         self._busy = False
         self._current_op = None
@@ -456,27 +594,56 @@ class DeckDetailScreen(Screen):
         log = self.query_one(LogPanel)
         if op == "download":
             if result is not None and result.error is not None:
+                self._chain_build = False
                 self._handle_download_failed(result.error)
                 return
             self._deck.status = DeckStatus.UP_TO_DATE
             self.app.config.save()
             log.set_status("Download complete.")
+            self.app.notify("Deck downloaded.", title="Done")
+            if self._chain_build:
+                self._chain_build = False
+                self._start_chained_build()
+                return
         elif op == "update":
             if result is not None and result.error is not None:
+                self._chain_build = False
                 self._handle_update_failed(result.error)
                 return
             self._deck.status = DeckStatus.UP_TO_DATE
             self._deck.updates_available = 0
             self.app.config.save()
+            no_changes = bool(result and result.no_changes)
             log.set_status(
-                "Already up to date." if (result and result.no_changes) else "Updates downloaded."
+                "Already up to date." if no_changes else "Updates downloaded."
             )
+            self.app.notify(
+                "Already up to date." if no_changes else "Latest version downloaded.",
+                title="Done",
+            )
+            if self._chain_build:
+                self._chain_build = False
+                if no_changes and self._deck.last_built_commit == self._deck.last_pulled_commit:
+                    # No new changes AND we already built this commit — skip rebuild.
+                    apkg = self._deck.last_built_apkg
+                    if apkg is not None:
+                        self._show_build_result(apkg)
+                else:
+                    self._start_chained_build()
+                    return
         elif op == "build":
             self.app.config.save()
             log.set_status("Anki file is ready.")
             apkg = self._deck.last_built_apkg
             if apkg is not None:
-                self._show_ready_modal(apkg)
+                self._show_build_result(apkg)
+                self.app.notify(str(apkg), title="Anki file ready")
+            # Populate the Git history panel — for a fresh deck the panel
+            # would still be on its initial "Checking…" placeholder otherwise,
+            # since on_mount started a download instead of a check.
+            self._start_check_updates()
+        elif op == "check" and isinstance(result, CheckUpdatesResult):
+            self._on_check_updates_done(result)
         elif op == "filtered" and isinstance(result, FilteredDecksResult):
             if result.locked:
                 self._show_locked_modal(retry=self._start_filtered_decks, op_label="Filtered-decks setup")
@@ -497,6 +664,12 @@ class DeckDetailScreen(Screen):
 
         if op == "update" and isinstance(err, GitError):
             self._handle_update_failed(err)
+            return
+
+        if op == "check":
+            # Background fetch — surface in the panel, not as a modal.
+            panel = self.query_one(UpdatesPanel)
+            panel.set_status(f"Couldn't check for updates: {err}" if err else "Couldn't check for updates.")
             return
 
         if op == "build" and isinstance(err, CardOverrideError):
@@ -763,23 +936,153 @@ class DeckDetailScreen(Screen):
         )
         log.set_status("Filtered decks rebuilt.")
 
-    def _show_ready_modal(self, apkg: Path) -> None:
-        def _on_ready(choice: str | None) -> None:
-            if choice == "open":
-                if not open_with_default_app(apkg):
-                    self.app.notify(
-                        f"Couldn't open {apkg.name}. Use 'Show file' and open it manually.",
-                        severity="warning",
-                    )
-            elif choice == "reveal":
-                reveal_in_file_manager(apkg)
+    def _on_check_updates_done(self, result: CheckUpdatesResult) -> None:
+        panel = self.query_one(UpdatesPanel)
+        if result.error is not None:
+            panel.set_status(f"Couldn't check for updates: {result.error}")
+            return
+        panel.set_commits(result.commits)
+        new_count = sum(1 for c in result.commits if c.is_new)
+        local = (self._deck.last_pulled_commit or "")[:7]
+        if new_count and local:
+            panel.set_status(
+                f"{new_count} new commit(s) available — local at {local}."
+            )
+            self._deck.status = DeckStatus.UPDATES_AVAILABLE
+            self._deck.updates_available = new_count
+        elif local:
+            panel.set_status(f"Up to date (local at {local}).")
+            self._deck.status = DeckStatus.UP_TO_DATE
+            self._deck.updates_available = 0
+        else:
+            panel.set_status(f"Showing {len(result.commits)} recent commit(s).")
+        self._refresh_button_variants()
 
-        self.app.push_screen(AnkiFileReadyModal(apkg_path=apkg), _on_ready)
+    def _scroll_to_download_card(self) -> None:
+        try:
+            self.query_one("#download-card").scroll_visible(animate=False, top=True)
+        except Exception:
+            pass
+
+    def _show_build_result(self, apkg: Path, *, scroll: bool = True) -> None:
+        """Reveal the apkg meta-row link + Import-to-Anki button.
+
+        ``scroll=True`` brings the download card into view (after a fresh build);
+        callers seeding the result from disk on mount should pass ``False`` so
+        the user starts at the top of the screen.
+        """
+        self._apkg_path = apkg
+        try:
+            self.query_one("#apkg-link", _MetaLink).update(str(apkg))
+            self.add_class("has-build")
+            if scroll:
+                self.query_one("#download-card").scroll_visible(animate=False)
+            self._refresh_button_variants()
+        except Exception:
+            pass
+
+    def _hide_build_result(self) -> None:
+        try:
+            self.remove_class("has-build")
+            self._refresh_button_variants()
+        except Exception:
+            pass
+
+    def _refresh_button_variants(self) -> None:
+        """Highlight the action that makes sense for the current deck state.
+
+        - NOT_DOWNLOADED: download is primary (only action).
+        - UPDATES_AVAILABLE: download is primary, import is the secondary path.
+        - UP_TO_DATE: import is primary (re-import locally), download is muted.
+        """
+        try:
+            download = self.query_one("#download", Button)
+            import_btn = self.query_one("#open-in-anki", Button)
+        except Exception:
+            return
+        status = self._deck.status
+        if status is DeckStatus.UPDATES_AVAILABLE or status is DeckStatus.NOT_DOWNLOADED:
+            download.variant = "primary"
+            import_btn.variant = "default"
+        else:
+            download.variant = "default"
+            import_btn.variant = "primary"
+
+    def _reveal_apkg(self) -> None:
+        if self._apkg_path is None:
+            return
+        if reveal_in_file_manager(self._apkg_path):
+            self.app.notify(str(self._apkg_path), title="Opened Folder")
+        else:
+            self.app.notify(
+                f"Couldn't open {self._apkg_path}.", severity="warning"
+            )
+
+    def _open_in_anki(self) -> None:
+        if self._apkg_path is None:
+            return
+        if not open_with_default_app(self._apkg_path):
+            self.app.notify(
+                f"Couldn't open {self._apkg_path.name}.", severity="warning"
+            )
+
+    # ---------- remove flow ---------- #
+
+    def _start_remove_deck(self) -> None:
+        def _on_choice(result: RemoveDeckResult | None) -> None:
+            if result is None:
+                return
+            self._finalize_remove_deck()
+
+        self.app.push_screen(
+            RemoveDeckModal(
+                nickname=self._deck.nickname, local_path=self._deck.local_path
+            ),
+            _on_choice,
+        )
+
+    def _finalize_remove_deck(self) -> None:
+        deck = self._deck
+        if deck in self.app.app_state.decks:
+            self.app.app_state.decks.remove(deck)
+        if deck in self.app.config.decks:
+            self.app.config.decks.remove(deck)
+        self.app.config.save()
+
+        outcome = delete_deck_files(deck.local_path)
+        if outcome == "deleted":
+            self.app.notify(
+                f'"{deck.nickname}" removed and deleted from disk.', title="Removed"
+            )
+        elif outcome == "skipped-unsafe":
+            self.app.notify(
+                f'"{deck.nickname}" removed from the list. The files at '
+                f'{deck.local_path} weren\'t deleted because the path looked '
+                "unsafe to remove.",
+                title="Files kept",
+                severity="warning",
+            )
+        elif outcome == "missing":
+            self.app.notify(
+                f'"{deck.nickname}" removed. The files at {deck.local_path} '
+                "were already gone.",
+                title="Removed",
+            )
+        else:  # "error"
+            self.app.notify(
+                f'"{deck.nickname}" removed from the list, but we couldn\'t '
+                f'delete the files at {deck.local_path}.',
+                title="Couldn't delete files",
+                severity="warning",
+            )
+
+        # Return to the dashboard — this deck no longer exists.
+        self.app.pop_screen()
 
     # ---------- UI mutation helpers ---------- #
 
     def _set_action_buttons_enabled(self, enabled: bool) -> None:
-        for btn_id in ("download", "make", "filtered", "rebuild-filtered"):
+        for btn_id in ("download", "filtered", "rebuild-filtered"):
             try:
                 btn = self.query_one(f"#{btn_id}", Button)
             except Exception:
@@ -801,3 +1104,4 @@ class DeckDetailScreen(Screen):
             self.query_one("#filtered-help", Static).update(self._filtered_decks_help_text())
         except Exception:
             pass
+        self._refresh_button_variants()

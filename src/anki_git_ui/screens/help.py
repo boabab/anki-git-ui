@@ -12,16 +12,15 @@ from .. import __version__
 
 
 _WHAT = (
-    "Anki Deck Sync downloads Anki decks that have been shared on GitHub and "
-    "prepares them as Anki deck files (.apkg) that you can import in Anki. "
-    "Think of it as a subscription manager for Anki decks."
+    "Anki Community Deck Sync downloads Anki decks that have been shared on "
+    "GitHub and prepares them as Anki deck files (.apkg) that you can import "
+    "in Anki. Think of it as a subscription manager for community decks."
 )
 
 _HOW = (
-    "1. Click \"+ Add a new deck\" on the dashboard and paste the GitHub link.\n"
-    "2. Click \"Download updates\" to save the latest version on your computer.\n"
-    "3. Click \"Make Anki file\" to prepare the deck for Anki.\n"
-    "4. Open Anki and use File → Import to add the prepared file."
+    "1. Click \"+ Add a new community deck\" on the dashboard and paste the GitHub link.\n"
+    "2. Click \"Download latest updates\" to pull the latest version and prepare a new Anki deck file.\n"
+    "3. Click \"Import to Anki\" to open the file in Anki, or use File → Import in Anki manually."
 )
 
 _SHORTCUTS = (
@@ -82,7 +81,7 @@ class HelpScreen(Screen):
             yield Static(_SHORTCUTS, classes="help-section-body")
             yield Static("About", classes="help-section-title")
             yield Static(
-                f"Anki Deck Sync version {__version__}\n"
+                f"Anki Community Deck Sync version {__version__}\n"
                 "Built on top of anki-gitify.",
                 classes="help-section-body",
             )

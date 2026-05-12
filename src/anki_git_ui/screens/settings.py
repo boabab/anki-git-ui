@@ -36,7 +36,10 @@ class SettingsScreen(Screen):
         margin: 0 0 0 1;
     }
     #settings-body {
-        padding: 1 4;
+        padding: 1 2 1 4;
+    }
+    #settings-body > * {
+        margin-right: 2;
     }
     .settings-section {
         text-style: bold;
@@ -116,7 +119,7 @@ class SettingsScreen(Screen):
                 classes="" if has_override else "custom-collection-hidden",
             )
 
-            yield Static("Where new decks are saved on your computer", classes="settings-section")
+            yield Static("Where new community decks are saved on your computer", classes="settings-section")
             yield Static(
                 "Each deck you subscribe to is saved as a folder inside this folder.",
                 classes="settings-help",

@@ -61,7 +61,7 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
     version = int(data.get("config_version", 0))
     if version > CURRENT_VERSION:
         raise ValueError(
-            f"This config was written by a newer version of Anki Deck Sync "
+            f"This config was written by a newer version of Anki Community Deck Sync "
             f"(config_version={version}, this app understands {CURRENT_VERSION}). "
             "Please update the app."
         )

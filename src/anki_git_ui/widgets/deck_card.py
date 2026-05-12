@@ -1,8 +1,8 @@
 """DeckCard: one row in the dashboard list.
 
-Each card shows the deck nickname, status (in plain English), and two
-buttons. The whole card is clickable to open the deck's detail screen, but
-the visible buttons are the discoverable interaction.
+Each card shows the deck nickname, status (in plain English), and an
+"Open" button. The whole card is clickable to open the deck's detail
+screen; deletion happens from inside the detail view.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ def _detail_line(deck: DeckEntry) -> str:
     label = status_label(deck.status, count=deck.updates_available)
     if deck.status is DeckStatus.NOT_DOWNLOADED:
         return label
-    last = _humanize(deck.last_built_at, fallback="never")
-    return f"{label} · last prepared {last}"
+    last = _humanize(deck.last_pulled_at, fallback="never")
+    return f"{label} · last downloaded {last}"
 
 
 class DeckCard(Vertical):
@@ -46,36 +46,34 @@ class DeckCard(Vertical):
     DEFAULT_CSS = """
     DeckCard {
         height: auto;
-        border: round $border-blurred;
+        border: round $panel-darken-1;
         padding: 1 2;
         margin-bottom: 1;
     }
     DeckCard:dark {
         border: round $surface-lighten-2;
     }
+    /* Header is title + detail line as a single block on the left, with the
+       Open button on the right spanning the full block height. */
+    DeckCard .deck-header {
+        height: 3;
+        width: 1fr;
+    }
+    DeckCard .deck-text {
+        width: 1fr;
+        height: auto;
+    }
     DeckCard .deck-title {
         text-style: bold;
         color: $primary;
+        margin-bottom: 1;
     }
     DeckCard .deck-detail {
         color: $text-muted;
-        padding-bottom: 1;
-    }
-    DeckCard .deck-actions {
-        height: 3;
-        align-horizontal: right;
-    }
-    DeckCard .deck-actions Button {
-        margin-left: 2;
     }
     """
 
     class Open(Message):
-        def __init__(self, nickname: str) -> None:
-            super().__init__()
-            self.nickname = nickname
-
-    class Remove(Message):
         def __init__(self, nickname: str) -> None:
             super().__init__()
             self.nickname = nickname
@@ -85,18 +83,16 @@ class DeckCard(Vertical):
         self._deck = deck
 
     def compose(self) -> ComposeResult:
-        yield Static(self._deck.nickname, classes="deck-title")
-        yield Static(_detail_line(self._deck), classes="deck-detail")
-        with Horizontal(classes="deck-actions"):
+        with Horizontal(classes="deck-header"):
+            with Vertical(classes="deck-text"):
+                yield Static(self._deck.nickname, classes="deck-title")
+                yield Static(_detail_line(self._deck), classes="deck-detail")
             yield Button("Open", id="open", variant="primary")
-            yield Button("Remove", id="remove")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         if event.button.id == "open":
             self.post_message(self.Open(self._deck.nickname))
-        elif event.button.id == "remove":
-            self.post_message(self.Remove(self._deck.nickname))
 
 
 def _slug(text: str) -> str:

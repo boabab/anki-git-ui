@@ -76,7 +76,7 @@ class WelcomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="welcome-card"):
-            yield Static("Welcome to Anki Deck Sync", classes="welcome-title")
+            yield Static("Welcome to Anki Community Deck Sync", classes="welcome-title")
             yield Static(
                 "Subscribe to Anki decks shared on GitHub. We download the deck for you "
                 "and prepare a file you can open in Anki.",

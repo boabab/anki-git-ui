@@ -18,7 +18,7 @@ from .state import AppState
 class AnkiGitUIApp(App):
     """Friendly, mouse-first TUI for anki-gitify."""
 
-    TITLE = "Anki Deck Sync"
+    TITLE = "Anki Community Deck Sync"
     SUB_TITLE = ""
 
     CSS = """
@@ -61,7 +61,7 @@ class AnkiGitUIApp(App):
     }
     Button:disabled {
         text-opacity: 40%;
-        background: $surface;
+        background-tint: $surface 30%;
     }
 
     Button.-primary {
@@ -80,6 +80,34 @@ class AnkiGitUIApp(App):
     }
     Button.-error:hover {
         background: $error-lighten-1;
+    }
+
+    /* Inline header buttons — sized just wide enough to fit the label
+       (Textual adds `line-pad: 1` on Button, stealing 2 cells beyond our
+       padding). Height stays 3 so the button reads as a proper button; the
+       title widget alongside is set to height 3 + middle-aligned in CSS so
+       the label visually sits next to the button on its middle row. */
+    #refresh-updates {
+        min-width: 13;
+        width: 13;
+    }
+    DeckCard #open {
+        min-width: 10;
+        width: 10;
+    }
+
+    /* Input / RadioSet borders: match the card/log-panel grays.
+       - light mode: $panel-darken-1 (darker than surface)
+       - dark mode:  $surface-lighten-2 (lighter than surface)
+       Focus uses $primary so an active field still pops. */
+    Input, RadioSet {
+        border: tall $panel-darken-1;
+    }
+    Input:dark, RadioSet:dark {
+        border: tall $surface-lighten-2;
+    }
+    Input:focus, RadioSet:focus {
+        border: tall $primary;
     }
     """
 
