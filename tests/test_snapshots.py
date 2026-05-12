@@ -41,6 +41,21 @@ def stable_welcome_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def stable_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make Settings-screen profile detection deterministic regardless of host.
+
+    Without this, the snapshot picks up whichever Anki profiles exist on the
+    dev machine (or none, on a fresh CI runner), so the rendered SVG drifts.
+    """
+    from pathlib import Path
+
+    monkeypatch.setattr(
+        "anki_git_ui.screens.settings.detect_profiles",
+        lambda: (Path("/home/user/.local/share/Anki2"), ["User 1"]),
+    )
+
+
 def test_dashboard_snapshot(make_app, snap_compare) -> None:
     app = make_app()
     assert snap_compare(app, terminal_size=(120, 40))
