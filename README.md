@@ -10,7 +10,20 @@ Built with [Textual](https://textual.textualize.io/) — runs in any modern term
 
 > **Status:** early development (v0.1.0). Expect rough edges.
 
-## Install
+## Download
+
+Pre-built binaries for the latest release are on the [Releases page](https://github.com/boabab/anki-git-ui/releases/latest). No Python needed — download, unzip, run.
+
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `AnkiGitUI-macos-arm64.zip` |
+| macOS (Intel) | `AnkiGitUI-macos-x86_64.zip` |
+| Linux (x86_64) | `AnkiGitUI-linux-x86_64.AppImage` |
+| Windows (x86_64) | `AnkiGitUI-windows-x86_64.zip` |
+
+On macOS, the first launch may warn that the app is from an unidentified developer — right-click the app and choose "Open" once, then it remembers. Windows SmartScreen has a similar one-time prompt.
+
+## Install from source
 
 Requires Python 3.11–3.13 and a local Anki installation (Anki must be closed during imports).
 
@@ -54,4 +67,4 @@ See [CLAUDE.md](CLAUDE.md) for the full command list, repo conventions, and know
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Robin

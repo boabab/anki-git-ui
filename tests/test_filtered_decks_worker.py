@@ -13,11 +13,15 @@ from anki_git_ui.workers.filtered_decks_worker import (
 )
 
 
-def test_is_locked_error_matches_runtime_error_with_locked_substring() -> None:
+def test_is_locked_error_matches_by_message_not_type() -> None:
     assert is_locked_error(RuntimeError("Cannot open: file is locked. Close Anki."))
     assert is_locked_error(RuntimeError("LOCKED"))
+    assert is_locked_error(RuntimeError("Anki already open"))
+    assert is_locked_error(RuntimeError("currently syncing"))
     assert not is_locked_error(RuntimeError("some other failure"))
-    assert not is_locked_error(ValueError("locked but wrong type"))
+    # Deliberate: anki.errors.DBError is a sibling of RuntimeError, not a
+    # subclass, so the check is intentionally message-based, not type-based.
+    assert is_locked_error(ValueError("locked but wrong type"))
 
 
 def test_apply_filtered_decks_raises_when_no_filtered_yml(tmp_path: Path) -> None:

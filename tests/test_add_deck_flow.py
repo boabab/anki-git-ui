@@ -38,7 +38,12 @@ async def test_add_deck_empty_url_does_not_advance(make_app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_deck_step_1_advances_to_step_2(make_app) -> None:
+async def test_add_deck_step_1_advances_to_step_2(
+    make_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pressing Next runs verify_remote in a worker thread; stub it so the
+    # test doesn't hit the network.
+    monkeypatch.setattr("anki_git_ui.screens.add_deck.verify_remote", lambda url: None)
     app = make_app()
     async with app.run_test(size=(120, 40)) as pilot:
         _press(app, "#add-deck")
@@ -47,14 +52,18 @@ async def test_add_deck_step_1_advances_to_step_2(make_app) -> None:
             "https://github.com/example/jlpt-n5-deck"
         )
         _press(app, "#next")
-        await pilot.pause()
+        # Worker runs in a thread, then on success switches the screen.
+        await pilot.pause(0.2)
         assert app.screen._step == 2
         nickname = app.screen.query_one("#nickname-input", Input).value
         assert "Jlpt" in nickname or "jlpt" in nickname.lower()
 
 
 @pytest.mark.asyncio
-async def test_add_deck_back_preserves_url(make_app) -> None:
+async def test_add_deck_back_preserves_url(
+    make_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("anki_git_ui.screens.add_deck.verify_remote", lambda url: None)
     app = make_app()
     async with app.run_test(size=(120, 40)) as pilot:
         _press(app, "#add-deck")
@@ -63,7 +72,7 @@ async def test_add_deck_back_preserves_url(make_app) -> None:
             "https://github.com/example/preserve-me"
         )
         _press(app, "#next")
-        await pilot.pause()
+        await pilot.pause(0.2)
         _press(app, "#prev")
         await pilot.pause()
         url_value = app.screen.query_one("#url-input", Input).value
