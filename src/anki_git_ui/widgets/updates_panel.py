@@ -70,7 +70,7 @@ class UpdatesPanel(Vertical):
             with Vertical(classes="updates-text"):
                 yield Static("Git history", classes="updates-header")
                 yield Static("Checking…", classes="updates-status", id="updates-status")
-            yield Button("Refresh", id="refresh-updates")
+            yield Button("↻ Refresh", id="refresh-updates")
         yield RichLog(highlight=False, markup=False, max_lines=200, wrap=False)
 
     # ---------- public API ---------- #

@@ -94,6 +94,14 @@ class DeckCard(Vertical):
         if event.button.id == "open":
             self.post_message(self.Open(self._deck.nickname))
 
+    def refresh_display(self) -> None:
+        """Re-render based on the current deck state — used after a dashboard
+        refresh so cards reflect the new status without a recompose."""
+        try:
+            self.query_one(".deck-detail", Static).update(_detail_line(self._deck))
+        except Exception:
+            pass
+
 
 def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in text.lower()).strip("-")

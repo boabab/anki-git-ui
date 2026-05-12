@@ -87,9 +87,9 @@ class AnkiGitUIApp(App):
        padding). Height stays 3 so the button reads as a proper button; the
        title widget alongside is set to height 3 + middle-aligned in CSS so
        the label visually sits next to the button on its middle row. */
-    #refresh-updates {
-        min-width: 13;
-        width: 13;
+    #refresh-updates, #refresh-decks {
+        min-width: 15;
+        width: 15;
     }
     DeckCard #open {
         min-width: 10;
