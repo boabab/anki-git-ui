@@ -25,10 +25,13 @@ class AppState:
     is_first_run: bool = True
 
 
-def make_mock_state() -> AppState:
+def make_mock_state(default_save_folder: Path | None = None) -> AppState:
     """Pre-canned state used by the M2 skeleton until M3 wires real config."""
 
-    state = AppState(is_first_run=False)
+    state = AppState(
+        default_save_folder=default_save_folder or Path.home() / "AnkiDecks",
+        is_first_run=False,
+    )
     state.decks = [
         DeckEntry(
             nickname="JLPT N5",

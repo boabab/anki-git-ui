@@ -19,6 +19,7 @@ def stable_theme(monkeypatch: pytest.MonkeyPatch) -> None:
     Snapshots run on the dev machine and CI; without this, a developer on a
     light-mode Mac would generate different SVGs than the CI runner.
     """
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(
         "anki_git_ui.domain.theme.darkdetect.theme", lambda: "Dark"
     )

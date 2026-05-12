@@ -14,6 +14,9 @@ from anki_git_ui.config import Config
 from anki_git_ui.state import AppState, make_mock_state
 
 
+TEST_SAVE_FOLDER = Path("/tmp/anki-git-ui-test/AnkiDecks")
+
+
 @pytest.fixture
 def empty_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     """Return a fresh Config that points its config_path() at tmp_path."""
@@ -21,7 +24,7 @@ def empty_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     monkeypatch.setattr("anki_git_ui.config.config_path", lambda: cfg_path)
     monkeypatch.setattr("anki_git_ui.app.config_exists", lambda: cfg_path.is_file())
     monkeypatch.setattr("anki_git_ui.config.config_exists", lambda: cfg_path.is_file())
-    return Config()
+    return Config(default_save_folder=TEST_SAVE_FOLDER)
 
 
 @pytest.fixture
@@ -35,9 +38,10 @@ def make_app(
     """
 
     def _make(*, state: AppState | None = None, config: Config | None = None) -> AnkiGitUIApp:
+        cfg = config or empty_config
         return AnkiGitUIApp(
-            config=config or empty_config,
-            app_state=state or make_mock_state(),
+            config=cfg,
+            app_state=state or make_mock_state(default_save_folder=cfg.default_save_folder),
         )
 
     return _make
