@@ -11,6 +11,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
 from ..domain.profile_ops import detect_profiles
+from ..domain.text_utils import format_path
 
 
 _CUSTOM_VALUE = "__custom__"
@@ -94,7 +95,7 @@ class SettingsScreen(Screen):
             yield Static("Your Anki", classes="settings-section")
             if not self._profiles:
                 yield Static(
-                    f"We couldn't find an Anki profile at {self._anki_base}. "
+                    f"We couldn't find an Anki profile at {format_path(self._anki_base)}. "
                     "Open Anki once to create one, then come back here. You can "
                     "also point at a collection.anki2 file directly below.",
                     classes="no-profiles",
@@ -113,7 +114,7 @@ class SettingsScreen(Screen):
                     id=f"profile-{_CUSTOM_VALUE}",
                 )
             yield Input(
-                value=str(cfg.anki.collection_override) if cfg.anki.collection_override else "",
+                value=format_path(cfg.anki.collection_override) if cfg.anki.collection_override else "",
                 id="custom-collection",
                 placeholder="/absolute/path/to/collection.anki2",
                 classes="" if has_override else "custom-collection-hidden",
@@ -125,7 +126,7 @@ class SettingsScreen(Screen):
                 classes="settings-help",
             )
             yield Input(
-                value=str(cfg.default_save_folder),
+                value=format_path(cfg.default_save_folder),
                 id="save-folder",
                 placeholder="~/AnkiDecks",
             )

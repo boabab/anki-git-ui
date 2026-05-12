@@ -7,8 +7,6 @@ or copy, regenerate with ``--snapshot-update``.
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from anki_git_ui.domain.models import WelcomeChecks
@@ -58,6 +56,20 @@ def stable_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def stable_path_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force POSIX rendering for paths in the UI during snapshot tests.
+
+    Production uses native rendering (backslashes on Windows) — see
+    ``anki_git_ui.domain.text_utils.format_path``. Snapshot SVGs are baselined
+    in POSIX form, so we patch every consumer's bound name to keep the runners
+    in agreement without changing user-visible behavior.
+    """
+    posix = lambda p: p.as_posix()
+    monkeypatch.setattr("anki_git_ui.screens.settings.format_path", posix)
+    monkeypatch.setattr("anki_git_ui.screens.deck_detail.format_path", posix)
+
+
 def test_dashboard_snapshot(make_app, snap_compare) -> None:
     app = make_app()
     assert snap_compare(app, terminal_size=(120, 40))
@@ -84,12 +96,6 @@ def test_help_snapshot(make_app, snap_compare) -> None:
     assert snap_compare(app, terminal_size=(120, 40), run_before=kick)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="settings screen renders Path with native separators (backslashes on Windows); "
-    "the macOS/Linux snapshot intentionally uses POSIX style. UI layout regressions are "
-    "still caught by running this on the two POSIX runners.",
-)
 def test_settings_snapshot(make_app, snap_compare) -> None:
     async def kick(pilot) -> None:
         from textual.widgets import Button
