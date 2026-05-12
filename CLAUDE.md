@@ -30,6 +30,7 @@ Tests in [tests/](tests/), snapshots in `tests/__snapshots__/`.
 
 ## Conventions
 
+- **Verifying changes:** CI runs `ruff check src tests` *and* `pytest`. Run both locally before saying a change is verified — `pytest` alone misses lint regressions (e.g. assigned lambdas, unused imports), which silently red-X CI on push.
 - **Layering:** screens own UI and orchestration; workers own async I/O; domain stays UI-free and pure (easy to unit-test).
 - **Persistence vs session:** anything that should survive a restart lives in `config.py`; ephemeral runtime state lives in `state.py`.
 - **Snapshot tests:** changing UI rendering breaks snapshots. Run `pytest --snapshot-update` only when the visual change is intentional; review the diff in `snapshot_report.html`.
