@@ -9,9 +9,12 @@ artifacts you download are already known to pass tests on the build runner.
 This list is for things tests can't check — does it actually launch when
 double-clicked, does the TTY come up, does the icon look right.
 
-## macOS (arm64 and x86_64)
+## macOS (Apple Silicon)
 
-1. Download `AnkiGitUI-macos-arm64.zip` (or `-x86_64` if running Intel).
+We ship arm64 only. Intel-Mac users install from source — see the
+[README](../README.md#install-from-source).
+
+1. Download `AnkiGitUI-macos-arm64.zip`.
 2. Unzip in Finder. You should see `AnkiGitUI.app`.
 3. Right-click → Open. Gatekeeper warns "from an unidentified developer";
    click Open. (Subsequent launches don't ask.)

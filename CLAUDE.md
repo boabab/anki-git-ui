@@ -39,8 +39,9 @@ Tests in [tests/](tests/), snapshots in `tests/__snapshots__/`.
 ## Gotchas
 
 - **PyInstaller bundling:** native extensions (`anki/_rsbridge.so`) and relative imports have specific requirements — read [docs/PACKAGING.md](docs/PACKAGING.md) before touching the packaging story.
-- **Cross-platform release QA:** [docs/RELEASE-VERIFICATION.md](docs/RELEASE-VERIFICATION.md) lists the manual checks across macOS arm64/x86, Linux, Windows.
-- **`anki-gitify` dependency:** `pyproject.toml` has a uv path-source for local dev (`../anki-gitify`); pip falls back to PyPI. Don't remove either without checking the other still works.
+- **Cross-platform release QA:** [docs/RELEASE-VERIFICATION.md](docs/RELEASE-VERIFICATION.md) lists the manual checks across macOS arm64, Linux, Windows. Intel macOS is no longer shipped as a binary (see release.yml comment).
+- **`anki-gitify` dependency:** not on PyPI. `pyproject.toml` has a `[tool.uv.sources]` path-source pointing at `../anki-gitify` for local dev; CI and the release workflow check out the sibling repo and `pip install -e ../anki-gitify` before installing this package. A bare `pip install anki-git-ui` from PyPI would fail — both repos must be cloned side-by-side.
+- **Path rendering:** the UI uses `format_path()` from `domain/text_utils.py` (native separators per OS). The config file uses `as_posix()` for portability. Don't bypass either — see the snapshot-test fixture for why.
 
 ## Doc-sync rule
 
