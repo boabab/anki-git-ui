@@ -22,8 +22,9 @@ jobs:
         include:
           - os: macos-latest          # Apple Silicon
             artifact: AnkiGitUI-macos-arm64.zip
-          - os: macos-13              # Intel
-            artifact: AnkiGitUI-macos-x86_64.zip
+          # Intel macOS dropped: GitHub's macos-13 runner pool is unreliable
+          # on the free tier as of 2026, and Apple stopped selling Intel Macs
+          # in 2023. Intel users can install from source — see README.
           - os: ubuntu-latest
             artifact: AnkiGitUI-linux-x86_64.AppImage
           - os: windows-latest
