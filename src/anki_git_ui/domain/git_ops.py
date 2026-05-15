@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,9 @@ def detect_git() -> GitDetection:
     if proc.returncode != 0:
         return GitDetection(
             found=False,
-            error=(proc.stderr or proc.stdout or "git --version exited non-zero").strip(),
+            error=(
+                proc.stderr or proc.stdout or "git --version exited non-zero"
+            ).strip(),
         )
     version = (proc.stdout or "").strip() or None
     return GitDetection(found=True, version=version)
@@ -75,6 +78,10 @@ class GitUnsupportedUrlError(GitError):
 
 class GitRepoNotFoundError(GitError):
     """Remote returned a 404 or similar — the URL doesn't point at a git repo."""
+
+
+class GitNotAnkiGitifyError(GitError):
+    """Remote is reachable but has no top-level ``gitify.yml`` — not an anki-gitify deck."""
 
 
 # ---------- Remote verification ---------- #
@@ -113,6 +120,91 @@ def verify_remote(url: str, *, timeout: float = 15.0) -> GitError | None:
     return _classify_clone_error(proc.stderr or proc.stdout, proc.returncode)
 
 
+def verify_gitify_repo(url: str, *, timeout: float = 30.0) -> GitError | None:
+    """Verify ``url`` is an accessible repo containing a top-level ``gitify.yml``.
+
+    Runs :func:`verify_remote` for connectivity, then performs a blobless
+    shallow clone into a temp dir (``--depth 1 --filter=blob:none
+    --no-checkout``) and checks the root tree for ``gitify.yml`` via
+    ``git ls-tree``. Only commit and tree objects are fetched — the
+    ``gitify.yml`` blob itself is never downloaded. Returns ``None`` on
+    success or a :class:`GitError` subclass on failure.
+    """
+    err = verify_remote(url, timeout=timeout)
+    if err is not None:
+        return err
+
+    git = shutil.which("git")
+    if git is None:  # already covered by verify_remote, but keep the type-check happy
+        return GitNotFoundError(
+            "We need git to download decks, but it's not installed. Please install git "
+            "and try again."
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="anki-git-ui-verify-", ignore_cleanup_errors=True
+    ) as tmpdir:
+        try:
+            proc = subprocess.run(
+                [
+                    git,
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--filter=blob:none",
+                    "--no-checkout",
+                    "--quiet",
+                    "--",
+                    url,
+                    tmpdir,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return GitNetworkError(
+                "Checking the link timed out. Please check your connection and try again."
+            )
+        except OSError as exc:
+            return GitError(f"Could not run git: {exc}")
+        if proc.returncode != 0:
+            return _classify_clone_error(proc.stderr or proc.stdout, proc.returncode)
+
+        try:
+            ls = subprocess.run(
+                [
+                    git,
+                    "-C",
+                    tmpdir,
+                    "ls-tree",
+                    "HEAD",
+                    "--name-only",
+                    "--",
+                    "gitify.yml",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return GitNetworkError(
+                "Checking the link timed out. Please check your connection and try again."
+            )
+        except OSError as exc:
+            return GitError(f"Could not run git: {exc}")
+        if ls.returncode != 0 or not ls.stdout.strip():
+            return GitNotAnkiGitifyError(
+                "This repository doesn't contain a 'gitify.yml' file at its root, so it "
+                "doesn't look like an anki-gitify deck. Only decks prepared with "
+                "anki-gitify can be used here."
+            )
+
+    return None
+
+
 # ---------- Streaming clone ---------- #
 
 
@@ -120,9 +212,9 @@ def verify_remote(url: str, *, timeout: float = 15.0) -> GitError | None:
 class CloneProgress:
     """One progress tick parsed from ``git clone --progress`` output."""
 
-    phase: str          # "Counting", "Compressing", "Receiving", "Resolving"
+    phase: str  # "Counting", "Compressing", "Receiving", "Resolving"
     percent: int | None  # 0–100, or None if git didn't include one
-    message: str        # raw line, stripped
+    message: str  # raw line, stripped
 
 
 _PROGRESS_RE = re.compile(
@@ -138,21 +230,35 @@ def _parse_progress(line: str) -> CloneProgress | None:
         pct = int(m.group("percent"))
     except (TypeError, ValueError):
         pct = None
-    return CloneProgress(phase=m.group("phase").strip(), percent=pct, message=line.strip())
+    return CloneProgress(
+        phase=m.group("phase").strip(), percent=pct, message=line.strip()
+    )
 
 
 def _classify_clone_error(stderr: str, returncode: int) -> GitError:
     text = stderr.lower()
-    if "authentication failed" in text or "could not read username" in text or "permission denied (publickey)" in text:
+    if (
+        "authentication failed" in text
+        or "could not read username" in text
+        or "permission denied (publickey)" in text
+    ):
         return GitAuthError(
             "We couldn't download this deck. It looks like the repository is private — "
             "Anki Community Deck Sync only supports public deck links right now."
         )
-    if "could not resolve host" in text or "could not connect" in text or "operation timed out" in text:
+    if (
+        "could not resolve host" in text
+        or "could not connect" in text
+        or "operation timed out" in text
+    ):
         return GitNetworkError(
             "We couldn't reach the internet. Check your connection and try again."
         )
-    if "remote repository not found" in text or "repository not found" in text or "404" in text:
+    if (
+        "remote repository not found" in text
+        or "repository not found" in text
+        or "404" in text
+    ):
         return GitRepoNotFoundError(
             "We couldn't find anything at that link. Double-check the address — it should "
             "look like https://github.com/<someone>/<deck-name>."
@@ -223,7 +329,9 @@ def clone(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        raise GitError("Download timed out. Please check your connection and try again.")
+        raise GitError(
+            "Download timed out. Please check your connection and try again."
+        )
 
     if proc.returncode != 0:
         # Best-effort cleanup of the partial clone.
@@ -244,9 +352,7 @@ def fetch(
     """``git fetch --prune --progress`` for an existing clone."""
     git = shutil.which("git")
     if git is None:
-        raise GitNotFoundError(
-            "git isn't available — please install it and try again."
-        )
+        raise GitNotFoundError("git isn't available — please install it and try again.")
     proc = subprocess.Popen(
         [git, "-C", str(repo), "fetch", "--prune", "--progress"],
         stdout=subprocess.DEVNULL,
@@ -268,7 +374,9 @@ def fetch(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        raise GitError("git fetch timed out. Please check your connection and try again.")
+        raise GitError(
+            "git fetch timed out. Please check your connection and try again."
+        )
     if proc.returncode != 0:
         raise _classify_clone_error("\n".join(captured), proc.returncode)
 
@@ -310,7 +418,9 @@ def pull_ff_only(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        raise GitError("git pull timed out. Please check your connection and try again.")
+        raise GitError(
+            "git pull timed out. Please check your connection and try again."
+        )
     if proc.returncode != 0:
         text = "\n".join(captured).lower()
         if (
@@ -414,8 +524,8 @@ class Commit:
     """One commit from :func:`recent_commits` — full sha kept so callers can
     cross-reference against ``last_pulled_commit`` to detect new commits."""
 
-    sha: str       # full 40-char sha
-    short: str     # 7-char short sha
+    sha: str  # full 40-char sha
+    short: str  # 7-char short sha
     date: str
     subject: str
 
@@ -446,8 +556,11 @@ def recent_commits(
     fmt = _COMMIT_SEP.join(["%H", "%h", "%ad", "%s"])
     proc = subprocess.run(
         [
-            git, "-C", str(repo),
-            "log", f"-{limit}",
+            git,
+            "-C",
+            str(repo),
+            "log",
+            f"-{limit}",
             f"--pretty=format:{fmt}",
             "--date=short",
             ref,
