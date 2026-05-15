@@ -17,45 +17,7 @@ from ..workers.check_updates_worker import CommitLine
 
 
 class UpdatesPanel(Vertical):
-    DEFAULT_CSS = """
-    UpdatesPanel {
-        height: auto;
-        border: round $panel-darken-1;
-        padding: 1 2;
-        margin-bottom: 1;
-    }
-    UpdatesPanel:dark {
-        border: round $surface-lighten-2;
-    }
-    /* Header row = (title + status) on the left as one block, Refresh button
-       on the right spanning the full block height. */
-    UpdatesPanel > #updates-header-row {
-        height: 3;
-        width: 1fr;
-        margin-bottom: 1;
-    }
-    UpdatesPanel > #updates-header-row > .updates-text {
-        width: 1fr;
-        height: auto;
-    }
-    UpdatesPanel > #updates-header-row > .updates-text > .updates-header {
-        text-style: bold;
-        padding-left: 1;
-        margin-bottom: 1;
-    }
-    UpdatesPanel > #updates-header-row > .updates-text > .updates-status {
-        color: $text-muted;
-        padding-left: 1;
-    }
-    UpdatesPanel > RichLog {
-        height: 7;
-        background: $surface-darken-1;
-        border: tall $surface-darken-2;
-    }
-    UpdatesPanel:dark > RichLog {
-        border: tall $surface-lighten-1;
-    }
-    """
+    DEFAULT_CLASSES = "card"
 
     class RefreshRequested(Message):
         """Posted when the user clicks Refresh — the screen owns the worker."""
@@ -71,7 +33,9 @@ class UpdatesPanel(Vertical):
                 yield Static("Git history", classes="updates-header")
                 yield Static("Checking…", classes="updates-status", id="updates-status")
             yield Button("↻ Refresh", id="refresh-updates")
-        yield RichLog(highlight=False, markup=False, max_lines=200, wrap=False)
+        yield RichLog(
+            highlight=False, markup=False, max_lines=200, wrap=False, classes="log-frame"
+        )
 
     # ---------- public API ---------- #
 

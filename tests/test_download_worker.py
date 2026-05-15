@@ -4,12 +4,39 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from anki_git_ui.domain.models import DeckEntry, DeckStatus
 from anki_git_ui.workers.download_deck_worker import (
+    _url_basename,
     deck_local_path,
     deck_nickname,
     download_deck,
 )
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        # Plain GitHub URL — base case
+        ("https://github.com/owner/repo", "repo"),
+        # Trailing slash is stripped
+        ("https://github.com/owner/repo/", "repo"),
+        # `.git` suffix is stripped
+        ("https://github.com/owner/repo.git", "repo"),
+        ("https://github.com/owner/repo.git/", "repo"),
+        # SSH-style URLs aren't a supported format, but the current behavior
+        # is "split on /, take last segment, strip .git" — pin it.
+        ("git@github.com:owner/repo.git", "repo"),
+        # Query strings are *not* stripped; current behavior is naive split.
+        ("https://github.com/owner/repo?ref=main", "repo?ref=main"),
+        # Degenerate inputs return empty — callers supply their own default.
+        ("", ""),
+        ("/", ""),
+    ],
+)
+def test_url_basename_pinned_behavior(url: str, expected: str) -> None:
+    assert _url_basename(url) == expected
 
 
 def test_deck_local_path_uses_url_basename(tmp_path: Path) -> None:

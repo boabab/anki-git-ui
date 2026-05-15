@@ -1,0 +1,284 @@
+/* Per-screen styles. Each block is prefixed with its screen's class name
+   to preserve the auto-scoping that DEFAULT_CSS provides. */
+
+
+/* ---------- DashboardScreen ---------- */
+
+DashboardScreen {
+    layout: vertical;
+}
+/* The bar's height/padding/background come from .app-bar in components.tcss. */
+DashboardScreen #app-bar .title {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+    color: $primary;
+}
+/* min-width on Button in screens was dormant in the original DEFAULT_CSS setup:
+   Textual treats DEFAULT_CSS rules as lower priority than user CSS (App.CSS /
+   CSS_PATH) regardless of CSS specificity, so the global `Button { min-width: 14 }`
+   in app.tcss always won. Now that screen rules live in CSS_PATH too, restating
+   the override here would activate a previously-dead rule and change the render.
+   The override is omitted to preserve byte-identical snapshots. */
+DashboardScreen #app-bar Button {
+    margin: 0 0 0 1;
+}
+DashboardScreen #dashboard-body {
+    padding: 1 2;
+}
+/* Decks header: "Your community decks" + status on the left, Refresh
+   on the right — mirrors the UpdatesPanel pattern. */
+DashboardScreen #decks-header {
+    height: 3;
+    width: 1fr;
+    margin-bottom: 1;
+}
+DashboardScreen #decks-header > .decks-text {
+    width: 1fr;
+    height: auto;
+}
+DashboardScreen #decks-header > .decks-text > .section-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+DashboardScreen #decks-header > .decks-text > .decks-status {
+    color: $text-muted;
+}
+DashboardScreen #empty-hint {
+    color: $text-muted;
+    padding: 2 0;
+}
+DashboardScreen #add-deck-row {
+    height: 5;
+    align-horizontal: center;
+    padding-top: 1;
+}
+/* min-width: 30 here was dormant in the original DEFAULT_CSS (see app-bar Button
+   note above). The button auto-sizes to its long label, so this is a no-op in
+   practice; omitted to preserve byte-identical snapshots. */
+
+
+/* ---------- DeckDetailScreen ---------- */
+
+DeckDetailScreen {
+    layout: vertical;
+}
+/* The bar's height/padding/background come from .app-bar in components.tcss. */
+DeckDetailScreen #detail-bar .title {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+    color: $primary;
+}
+DeckDetailScreen #detail-bar Button {
+    margin: 0 0 0 1;
+}
+DeckDetailScreen #detail-body {
+    padding: 1 2 1 4;
+}
+DeckDetailScreen #detail-body > * {
+    margin-right: 2;
+}
+DeckDetailScreen .meta-row {
+    height: 1;
+    width: 1fr;
+}
+/* Fixed-width prefix so "Remote repository:", "Local folder:", and
+   "Anki deck file:" all line up vertically and the links share a left edge. */
+DeckDetailScreen .meta-prefix {
+    width: 20;
+    color: $text-muted;
+}
+DeckDetailScreen .card-title {
+    text-style: bold;
+    padding-bottom: 1;
+}
+DeckDetailScreen .deck-status-line {
+    text-style: bold;
+    padding-bottom: 1;
+}
+/* Outer border comes from .card in components.tcss (each action-card carries
+   `classes="action-card card"`). */
+DeckDetailScreen .action-card {
+    height: auto;
+    padding: 1 2;
+    margin-bottom: 1;
+}
+/* min-width: 30 here was dormant in the original DEFAULT_CSS (see app-bar Button
+   note above); omitted to preserve byte-identical snapshots. */
+DeckDetailScreen .action-card Button {
+    margin-bottom: 1;
+}
+DeckDetailScreen .action-card .action-help {
+    color: $text-muted;
+}
+DeckDetailScreen .action-card.disabled .action-help {
+    color: $text-muted 50%;
+}
+DeckDetailScreen #apkg-row {
+    display: none;
+}
+DeckDetailScreen.has-build #apkg-row {
+    display: block;
+}
+DeckDetailScreen #download-card .build-row {
+    display: none;
+}
+DeckDetailScreen.has-build #download-card .build-row {
+    display: block;
+}
+
+
+/* ---------- SettingsScreen ---------- */
+
+SettingsScreen {
+    layout: vertical;
+}
+/* The bar's height/padding/background come from .app-bar in components.tcss. */
+SettingsScreen #settings-bar .title {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+    color: $primary;
+}
+SettingsScreen #settings-bar Button {
+    margin: 0 0 0 1;
+}
+SettingsScreen #settings-body {
+    padding: 1 2 1 4;
+}
+SettingsScreen #settings-body > * {
+    margin-right: 2;
+}
+SettingsScreen .settings-section {
+    text-style: bold;
+    color: $primary;
+    padding: 1 0 0 0;
+}
+SettingsScreen .settings-help {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+SettingsScreen .no-profiles {
+    color: $warning;
+    padding-bottom: 1;
+}
+SettingsScreen #custom-collection-row {
+    padding-bottom: 1;
+}
+SettingsScreen .custom-collection-hidden {
+    display: none;
+}
+SettingsScreen #buttons-row {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}
+/* min-width: 12 here was dormant in the original DEFAULT_CSS (see app-bar Button
+   note above); omitted to preserve byte-identical snapshots. */
+SettingsScreen #buttons-row Button {
+    margin-left: 2;
+}
+
+
+/* ---------- HelpScreen ---------- */
+
+HelpScreen {
+    layout: vertical;
+}
+/* The bar's height/padding/background come from .app-bar in components.tcss. */
+HelpScreen #help-bar .title {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+    color: $primary;
+}
+HelpScreen #help-bar Button {
+    margin: 0 0 0 1;
+}
+HelpScreen #help-body {
+    padding: 1 4;
+}
+HelpScreen .help-section-title {
+    text-style: bold;
+    color: $primary;
+    padding: 1 0 0 0;
+}
+HelpScreen .help-section-body {
+    padding-bottom: 1;
+}
+
+
+/* ---------- AddDeckScreen ---------- */
+
+AddDeckScreen {
+    layout: vertical;
+}
+/* The bar's height/padding/background come from .app-bar in components.tcss. */
+AddDeckScreen #add-bar .title {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+    color: $primary;
+}
+AddDeckScreen #add-body {
+    padding: 1 4;
+}
+AddDeckScreen .step-heading {
+    text-style: bold;
+    color: $primary;
+    padding-bottom: 1;
+}
+AddDeckScreen .field-label {
+    padding: 1 0 0 0;
+}
+AddDeckScreen .field-help {
+    color: $text-muted;
+    padding-top: 1;
+    padding-bottom: 1;
+}
+AddDeckScreen #add-buttons {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}
+AddDeckScreen #add-buttons Button {
+    margin-left: 2;
+    min-width: 14;
+}
+
+
+/* ---------- WelcomeScreen ---------- */
+
+WelcomeScreen {
+    align: center middle;
+}
+WelcomeScreen #welcome-card {
+    width: 80;
+    height: auto;
+    border: round $primary;
+    padding: 2 4;
+}
+WelcomeScreen .welcome-title {
+    text-style: bold;
+    color: $primary;
+    text-align: center;
+    padding-bottom: 1;
+}
+WelcomeScreen .welcome-body {
+    padding-bottom: 1;
+}
+WelcomeScreen .check-row {
+    padding-bottom: 0;
+}
+WelcomeScreen .check-ok { color: $success; }
+WelcomeScreen .check-warn { color: $warning; }
+WelcomeScreen .check-error { color: $error; }
+WelcomeScreen .welcome-buttons {
+    height: auto;
+    align-horizontal: center;
+    padding-top: 1;
+}
+WelcomeScreen .welcome-buttons Button {
+    margin: 0 1;
+}

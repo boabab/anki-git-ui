@@ -83,18 +83,23 @@ def download_deck(
     return DownloadResult(head_commit=sha, head_branch=branch, pulled_at=pulled_at)
 
 
-def deck_local_path(default_save_folder: Path, url: str) -> Path:
-    """Default ``local_path`` for a freshly added deck — basename of the URL."""
+def _url_basename(url: str) -> str:
+    """Last URL path segment with any trailing slash and ``.git`` suffix stripped.
+
+    Pure string operation — does not validate that ``url`` is well-formed.
+    Empty / slash-only inputs return ``""``; callers supply their own default.
+    """
     name = url.rstrip("/").split("/")[-1]
     if name.endswith(".git"):
         name = name[:-4]
-    name = name or "deck"
-    return default_save_folder / name
+    return name
+
+
+def deck_local_path(default_save_folder: Path, url: str) -> Path:
+    """Default ``local_path`` for a freshly added deck — basename of the URL."""
+    return default_save_folder / (_url_basename(url) or "deck")
 
 
 def deck_nickname(url: str) -> str:
     """Default nickname inferred from the URL basename."""
-    name = url.rstrip("/").split("/")[-1]
-    if name.endswith(".git"):
-        name = name[:-4]
-    return name.replace("-", " ").replace("_", " ").strip().title() or "Deck"
+    return _url_basename(url).replace("-", " ").replace("_", " ").strip().title() or "Deck"

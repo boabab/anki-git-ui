@@ -31,41 +31,6 @@ def run_checks() -> WelcomeChecks:
 
 
 class WelcomeScreen(Screen):
-    DEFAULT_CSS = """
-    WelcomeScreen {
-        align: center middle;
-    }
-    #welcome-card {
-        width: 80;
-        height: auto;
-        border: round $primary;
-        padding: 2 4;
-    }
-    .welcome-title {
-        text-style: bold;
-        color: $primary;
-        text-align: center;
-        padding-bottom: 1;
-    }
-    .welcome-body {
-        padding-bottom: 1;
-    }
-    .check-row {
-        padding-bottom: 0;
-    }
-    .check-ok { color: $success; }
-    .check-warn { color: $warning; }
-    .check-error { color: $error; }
-    .welcome-buttons {
-        height: auto;
-        align-horizontal: center;
-        padding-top: 1;
-    }
-    .welcome-buttons Button {
-        margin: 0 1;
-    }
-    """
-
     BINDINGS = [
         Binding("enter", "press_continue", "Continue", show=False),
     ]

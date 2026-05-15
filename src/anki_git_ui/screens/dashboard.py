@@ -7,85 +7,18 @@ from datetime import datetime, timezone
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Static
 from textual.worker import Worker, WorkerState
 
 from ..domain.models import DeckEntry, DeckStatus
+from ..domain.text_utils import humanize_age
 from ..widgets.deck_card import DeckCard
 from ..workers.check_updates_worker import check_for_updates
 
 
-def _humanize(dt: datetime | None) -> str:
-    if dt is None:
-        return "never"
-    delta = datetime.now(timezone.utc) - (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
-    secs = int(delta.total_seconds())
-    if secs < 60:
-        return "just now"
-    if secs < 3600:
-        return f"{secs // 60} minute{'s' if secs >= 120 else ''} ago"
-    if secs < 86400:
-        return f"{secs // 3600} hour{'s' if secs >= 7200 else ''} ago"
-    days = secs // 86400
-    return f"{days} day{'s' if days != 1 else ''} ago"
-
-
 class DashboardScreen(Screen):
-    DEFAULT_CSS = """
-    DashboardScreen {
-        layout: vertical;
-    }
-    #app-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #app-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #app-bar Button {
-        margin: 0 0 0 1;
-        min-width: 12;
-    }
-    #dashboard-body {
-        padding: 1 2;
-    }
-    /* Decks header: "Your community decks" + status on the left, Refresh
-       on the right — mirrors the UpdatesPanel pattern. */
-    #decks-header {
-        height: 3;
-        width: 1fr;
-        margin-bottom: 1;
-    }
-    #decks-header > .decks-text {
-        width: 1fr;
-        height: auto;
-    }
-    #decks-header > .decks-text > .section-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    #decks-header > .decks-text > .decks-status {
-        color: $text-muted;
-    }
-    #empty-hint {
-        color: $text-muted;
-        padding: 2 0;
-    }
-    #add-deck-row {
-        height: 5;
-        align-horizontal: center;
-        padding-top: 1;
-    }
-    #add-deck-row Button {
-        min-width: 30;
-    }
-    """
-
     BINDINGS = [
         Binding("a", "add_deck", "Add deck", show=False),
         Binding("question_mark", "show_help", "Help", show=False),
@@ -97,7 +30,7 @@ class DashboardScreen(Screen):
         self._last_refresh_at: datetime | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="app-bar"):
+        with Horizontal(id="app-bar", classes="app-bar"):
             yield Static("Anki Community Deck Sync", classes="title")
             yield Button("Help", id="help")
             yield Button("Settings", id="settings")
@@ -155,14 +88,14 @@ class DashboardScreen(Screen):
         if self._is_refreshing:
             return "• Refreshing decks…"
         if self._last_refresh_at is not None:
-            return f"• Last refreshed {_humanize(self._last_refresh_at)}"
+            return f"• Last refreshed {humanize_age(self._last_refresh_at)}"
         return ""
 
     def _update_status_label(self) -> None:
         try:
             self.query_one("#decks-status", Static).update(self._refresh_status_text())
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug("#decks-status not in DOM during refresh")
 
     def _start_refresh(self) -> None:
         if self._is_refreshing:

@@ -1,0 +1,94 @@
+/* Reusable widget styles. Each widget is its own class; rules are prefixed
+   by the widget class name to preserve the auto-scoping that DEFAULT_CSS
+   provided. */
+
+
+/* ---------- DeckCard ---------- */
+
+/* Outer border comes from .card in components.tcss (DEFAULT_CLASSES = "card"). */
+DeckCard {
+    height: auto;
+    padding: 1 2;
+    margin-bottom: 1;
+}
+/* Header is title + detail line as a single block on the left, with the
+   Open button on the right spanning the full block height. */
+DeckCard .deck-header {
+    height: 3;
+    width: 1fr;
+}
+DeckCard .deck-text {
+    width: 1fr;
+    height: auto;
+}
+DeckCard .deck-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+DeckCard .deck-detail {
+    color: $text-muted;
+}
+
+
+/* ---------- LogPanel ---------- */
+
+/* Outer border comes from .card in components.tcss (DEFAULT_CLASSES = "card"). */
+LogPanel {
+    height: auto;
+    padding: 1 2;
+}
+LogPanel > .log-header {
+    text-style: bold;
+    color: $foreground;
+    padding-bottom: 1;
+}
+LogPanel > .log-status {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+/* RichLog's background + border come from .log-frame in components.tcss. */
+LogPanel > RichLog {
+    height: 12;
+}
+LogPanel > ProgressBar {
+    margin-top: 1;
+    display: none;
+}
+LogPanel.show-progress > ProgressBar {
+    display: block;
+}
+
+
+/* ---------- UpdatesPanel ---------- */
+
+/* Outer border comes from .card in components.tcss (DEFAULT_CLASSES = "card"). */
+UpdatesPanel {
+    height: auto;
+    padding: 1 2;
+    margin-bottom: 1;
+}
+/* Header row = (title + status) on the left as one block, Refresh button
+   on the right spanning the full block height. */
+UpdatesPanel > #updates-header-row {
+    height: 3;
+    width: 1fr;
+    margin-bottom: 1;
+}
+UpdatesPanel > #updates-header-row > .updates-text {
+    width: 1fr;
+    height: auto;
+}
+UpdatesPanel > #updates-header-row > .updates-text > .updates-header {
+    text-style: bold;
+    padding-left: 1;
+    margin-bottom: 1;
+}
+UpdatesPanel > #updates-header-row > .updates-text > .updates-status {
+    color: $text-muted;
+    padding-left: 1;
+}
+/* RichLog's background + border come from .log-frame in components.tcss. */
+UpdatesPanel > RichLog {
+    height: 7;
+}

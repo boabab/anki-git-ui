@@ -18,60 +18,6 @@ _CUSTOM_VALUE = "__custom__"
 
 
 class SettingsScreen(Screen):
-    DEFAULT_CSS = """
-    SettingsScreen {
-        layout: vertical;
-    }
-    #settings-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #settings-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #settings-bar Button {
-        margin: 0 0 0 1;
-    }
-    #settings-body {
-        padding: 1 2 1 4;
-    }
-    #settings-body > * {
-        margin-right: 2;
-    }
-    .settings-section {
-        text-style: bold;
-        color: $primary;
-        padding: 1 0 0 0;
-    }
-    .settings-help {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    .no-profiles {
-        color: $warning;
-        padding-bottom: 1;
-    }
-    #custom-collection-row {
-        padding-bottom: 1;
-    }
-    .custom-collection-hidden {
-        display: none;
-    }
-    #buttons-row {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #buttons-row Button {
-        margin-left: 2;
-        min-width: 12;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "cancel", "Back", show=False),
     ]
@@ -87,7 +33,7 @@ class SettingsScreen(Screen):
         selected_profile = cfg.anki.profile
         has_override = cfg.anki.collection_override is not None
 
-        with Horizontal(id="settings-bar"):
+        with Horizontal(id="settings-bar", classes="app-bar"):
             yield Static("Settings", classes="title")
             yield Button("◀ Back", id="back")
 
