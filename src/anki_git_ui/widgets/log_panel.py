@@ -15,45 +15,14 @@ from textual.widgets import ProgressBar, RichLog, Static
 
 
 class LogPanel(Vertical):
-    DEFAULT_CSS = """
-    LogPanel {
-        height: auto;
-        border: round $panel-darken-1;
-        padding: 1 2;
-    }
-    LogPanel:dark {
-        border: round $surface-lighten-2;
-    }
-    LogPanel > .log-header {
-        text-style: bold;
-        color: $foreground;
-        padding-bottom: 1;
-    }
-    LogPanel > .log-status {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    LogPanel > RichLog {
-        height: 12;
-        background: $surface-darken-1;
-        border: tall $surface-darken-2;
-    }
-    LogPanel:dark > RichLog {
-        border: tall $surface-lighten-1;
-    }
-    LogPanel > ProgressBar {
-        margin-top: 1;
-        display: none;
-    }
-    LogPanel.show-progress > ProgressBar {
-        display: block;
-    }
-    """
+    DEFAULT_CLASSES = "card"
 
     def compose(self) -> ComposeResult:
         yield Static("Debug log", classes="log-header")
         yield Static("Ready.", classes="log-status")
-        yield RichLog(highlight=False, markup=False, max_lines=2000, wrap=False)
+        yield RichLog(
+            highlight=False, markup=False, max_lines=2000, wrap=False, classes="log-frame"
+        )
         yield ProgressBar(total=100, show_percentage=True, show_eta=False)
 
     # ---------- public API ---------- #

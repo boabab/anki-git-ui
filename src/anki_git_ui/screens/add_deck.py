@@ -12,55 +12,13 @@ from textual.screen import Screen
 from textual.widgets import Button, Input, Static
 from textual.worker import Worker, WorkerState
 
-from ..domain.git_ops import GitError, verify_remote
+from ..domain.git_ops import GitError, verify_gitify_repo
 from ..domain.models import DeckEntry, DeckStatus
 from ..workers.download_deck_worker import deck_local_path, deck_nickname
 
 
 class AddDeckScreen(Screen):
     """Two-step add flow: paste link → name + folder → save and download."""
-
-    DEFAULT_CSS = """
-    AddDeckScreen {
-        layout: vertical;
-    }
-    #add-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #add-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #add-body {
-        padding: 1 4;
-    }
-    .step-heading {
-        text-style: bold;
-        color: $primary;
-        padding-bottom: 1;
-    }
-    .field-label {
-        padding: 1 0 0 0;
-    }
-    .field-help {
-        color: $text-muted;
-        padding-top: 1;
-        padding-bottom: 1;
-    }
-    #add-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #add-buttons Button {
-        margin-left: 2;
-        min-width: 14;
-    }
-    """
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
@@ -77,8 +35,10 @@ class AddDeckScreen(Screen):
     # ---------- compose / render ---------- #
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="add-bar"):
-            yield Static(f"Add a new community deck ({self._step} of 2)", classes="title")
+        with Horizontal(id="add-bar", classes="app-bar"):
+            yield Static(
+                f"Add a new community deck ({self._step} of 2)", classes="title"
+            )
             yield Button("◀ Back to dashboard", id="back-to-dashboard")
         if self._step == 1:
             yield from self._compose_step1()
@@ -87,7 +47,9 @@ class AddDeckScreen(Screen):
 
     def _compose_step1(self) -> ComposeResult:
         with VerticalScroll(id="add-body"):
-            yield Static("Paste the link to the deck on GitHub:", classes="step-heading")
+            yield Static(
+                "Paste the link to the deck on GitHub:", classes="step-heading"
+            )
             yield Input(
                 value=self._url,
                 placeholder="https://github.com/<someone>/<deck-name>",
@@ -95,7 +57,8 @@ class AddDeckScreen(Screen):
             )
             yield Static(
                 "The link should start with https:// and look like the example above. "
-                "We'll only download the deck — we don't need a GitHub account.",
+                "We'll only download the deck — we don't need a GitHub account."
+                "\n\nThe deck must be a gitified Anki deck, by anki-gitify.",
                 classes="field-help",
             )
             with Horizontal(id="add-buttons"):
@@ -159,9 +122,9 @@ class AddDeckScreen(Screen):
                 return
             self._url = url
             self._verifying = True
-            self.app.notify("Checking the link…", timeout=2)
+            self.app.notify("Checking the link and looking for gitify.yml…", timeout=3)
             self.run_worker(
-                lambda: verify_remote(self._url),
+                lambda: verify_gitify_repo(self._url),
                 thread=True,
                 exclusive=True,
                 group="add-deck-verify",

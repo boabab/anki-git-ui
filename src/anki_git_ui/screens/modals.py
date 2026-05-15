@@ -18,35 +18,6 @@ from textual.widgets import Button, Static
 class ConfirmModal(ModalScreen[bool]):
     """Generic two-button confirmation. Returns True on confirm, False on cancel."""
 
-    DEFAULT_CSS = """
-    ConfirmModal {
-        align: center middle;
-    }
-    #confirm-card {
-        width: 70;
-        height: auto;
-        background: $surface;
-        border: round $primary;
-        padding: 2 3;
-    }
-    .confirm-title {
-        text-style: bold;
-        color: $primary;
-        padding-bottom: 1;
-    }
-    .confirm-body {
-        padding-bottom: 1;
-    }
-    #confirm-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #confirm-buttons Button {
-        margin-left: 2;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "dismiss(False)", "Cancel", show=False),
     ]
@@ -97,43 +68,6 @@ class RemoveDeckModal(ModalScreen[RemoveDeckResult | None]):
     Returns ``None`` on cancel, or :class:`RemoveDeckResult` on confirm.
     """
 
-    DEFAULT_CSS = """
-    RemoveDeckModal {
-        align: center middle;
-    }
-    #remove-card {
-        width: 75;
-        height: auto;
-        background: $surface;
-        border: round $error;
-        padding: 2 3;
-    }
-    .remove-title {
-        text-style: bold;
-        color: $error;
-        padding-bottom: 1;
-    }
-    .remove-body {
-        padding-bottom: 1;
-    }
-    .remove-path {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    .remove-foot {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    #remove-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #remove-buttons Button {
-        margin-left: 2;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "dismiss(None)", "Cancel", show=False),
     ]
@@ -179,39 +113,6 @@ class AnkiLockedModal(ModalScreen[bool]):
     the worker), or ``False`` on Cancel.
     """
 
-    DEFAULT_CSS = """
-    AnkiLockedModal {
-        align: center middle;
-    }
-    #locked-card {
-        width: 70;
-        height: auto;
-        background: $surface;
-        border: round $warning;
-        padding: 2 3;
-    }
-    .locked-title {
-        text-style: bold;
-        color: $warning;
-        padding-bottom: 1;
-    }
-    .locked-body {
-        padding-bottom: 1;
-    }
-    .locked-hint {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    #locked-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    #locked-buttons Button {
-        margin-left: 2;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "dismiss(False)", "Cancel", show=False),
     ]
@@ -242,45 +143,6 @@ class AnkiLockedModal(ModalScreen[bool]):
 
 class ErrorModal(ModalScreen[None]):
     """Generic error message with optional collapsible technical details."""
-
-    DEFAULT_CSS = """
-    ErrorModal {
-        align: center middle;
-    }
-    #error-card {
-        width: 75;
-        max-height: 80%;
-        background: $surface;
-        border: round $error;
-        padding: 2 3;
-    }
-    .error-title {
-        text-style: bold;
-        color: $error;
-        padding-bottom: 1;
-    }
-    .error-body {
-        padding-bottom: 1;
-    }
-    .error-details-toggle {
-        color: $text-muted;
-        padding-bottom: 1;
-    }
-    .error-details {
-        color: $text-muted;
-        padding: 1 0 1 2;
-        background: $surface-darken-1;
-        display: none;
-    }
-    .show-details .error-details {
-        display: block;
-    }
-    #error-buttons {
-        height: auto;
-        align-horizontal: right;
-        padding-top: 1;
-    }
-    """
 
     BINDINGS = [
         Binding("escape", "dismiss(None)", "Close", show=False),

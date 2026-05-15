@@ -1,0 +1,145 @@
+/* Modal screen styles. Each modal is its own ModalScreen subclass, so rules
+   are prefixed by the class name to preserve the auto-scoping that
+   DEFAULT_CSS provided. */
+
+
+/* ---------- ConfirmModal ---------- */
+
+ConfirmModal {
+    align: center middle;
+}
+ConfirmModal #confirm-card {
+    width: 70;
+    height: auto;
+    background: $surface;
+    border: round $primary;
+    padding: 2 3;
+}
+ConfirmModal .confirm-title {
+    text-style: bold;
+    color: $primary;
+    padding-bottom: 1;
+}
+ConfirmModal .confirm-body {
+    padding-bottom: 1;
+}
+ConfirmModal #confirm-buttons {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}
+ConfirmModal #confirm-buttons Button {
+    margin-left: 2;
+}
+
+
+/* ---------- RemoveDeckModal ---------- */
+
+RemoveDeckModal {
+    align: center middle;
+}
+RemoveDeckModal #remove-card {
+    width: 75;
+    height: auto;
+    background: $surface;
+    border: round $error;
+    padding: 2 3;
+}
+RemoveDeckModal .remove-title {
+    text-style: bold;
+    color: $error;
+    padding-bottom: 1;
+}
+RemoveDeckModal .remove-body {
+    padding-bottom: 1;
+}
+RemoveDeckModal .remove-path {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+RemoveDeckModal .remove-foot {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+RemoveDeckModal #remove-buttons {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}
+RemoveDeckModal #remove-buttons Button {
+    margin-left: 2;
+}
+
+
+/* ---------- AnkiLockedModal ---------- */
+
+AnkiLockedModal {
+    align: center middle;
+}
+AnkiLockedModal #locked-card {
+    width: 70;
+    height: auto;
+    background: $surface;
+    border: round $warning;
+    padding: 2 3;
+}
+AnkiLockedModal .locked-title {
+    text-style: bold;
+    color: $warning;
+    padding-bottom: 1;
+}
+AnkiLockedModal .locked-body {
+    padding-bottom: 1;
+}
+AnkiLockedModal .locked-hint {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+AnkiLockedModal #locked-buttons {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}
+AnkiLockedModal #locked-buttons Button {
+    margin-left: 2;
+}
+
+
+/* ---------- ErrorModal ---------- */
+
+ErrorModal {
+    align: center middle;
+}
+ErrorModal #error-card {
+    width: 75;
+    max-height: 80%;
+    background: $surface;
+    border: round $error;
+    padding: 2 3;
+}
+ErrorModal .error-title {
+    text-style: bold;
+    color: $error;
+    padding-bottom: 1;
+}
+ErrorModal .error-body {
+    padding-bottom: 1;
+}
+ErrorModal .error-details-toggle {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+ErrorModal .error-details {
+    color: $text-muted;
+    padding: 1 0 1 2;
+    background: $surface-darken-1;
+    display: none;
+}
+ErrorModal .show-details .error-details {
+    display: block;
+}
+ErrorModal #error-buttons {
+    height: auto;
+    align-horizontal: right;
+    padding-top: 1;
+}

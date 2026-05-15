@@ -1,0 +1,34 @@
+/* Reusable CSS classes for patterns that recur across screens/widgets.
+   Add a class to a widget (`classes="app-bar"`) instead of restating the
+   rule per screen. */
+
+
+/* Top app bar — the colored header strip used by Dashboard, DeckDetail,
+   Settings, Help, and AddDeck. Each screen previously restated these
+   three properties on its own `#<name>-bar` id. */
+.app-bar {
+    height: 3;
+    padding: 0 2;
+    background: $primary 10%;
+}
+
+/* Card-shape outer border. Used by DeckCard, LogPanel, UpdatesPanel, and the
+   DeckDetail action cards. Owns *only* the outer border + its `:dark` override
+   — never set borders on .card-tagged widgets elsewhere. */
+.card {
+    border: round $panel-darken-1;
+}
+.card:dark {
+    border: round $surface-lighten-2;
+}
+
+/* Streaming-log inner frame. Applied to the RichLog inside LogPanel and
+   UpdatesPanel — owns the inner background + border (distinct from .card's
+   outer border on the panel itself). */
+.log-frame {
+    background: $surface-darken-1;
+    border: tall $surface-darken-2;
+}
+.log-frame:dark {
+    border: tall $surface-lighten-1;
+}

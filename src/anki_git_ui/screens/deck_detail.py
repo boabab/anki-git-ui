@@ -9,7 +9,6 @@ remote and lists recent commits so the user can see what's available.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +16,7 @@ from anki_gitify.api import CardOverrideError
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
@@ -24,7 +24,7 @@ from yaml import YAMLError, safe_load
 
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
 from ..domain.deck_ops import delete_deck_files
-from ..domain.text_utils import format_path, truncate
+from ..domain.text_utils import format_path, humanize_age, truncate
 from ..domain.git_ops import CloneProgress, GitError
 from ..domain.models import DeckEntry, DeckStatus
 from ..widgets.log_panel import LogPanel
@@ -42,21 +42,6 @@ from ..workers.filtered_decks_worker import (
 )
 from ..workers.update_deck_worker import update_deck
 from .modals import AnkiLockedModal, ConfirmModal, ErrorModal, RemoveDeckModal, RemoveDeckResult
-
-
-def _humanize(dt: datetime | None) -> str:
-    if dt is None:
-        return "never"
-    delta = datetime.now(timezone.utc) - (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
-    secs = int(delta.total_seconds())
-    if secs < 60:
-        return "just now"
-    if secs < 3600:
-        return f"{secs // 60} minute{'s' if secs >= 120 else ''} ago"
-    if secs < 86400:
-        return f"{secs // 3600} hour{'s' if secs >= 7200 else ''} ago"
-    days = secs // 86400
-    return f"{days} day{'s' if days != 1 else ''} ago"
 
 
 class _MetaLink(Static):
@@ -102,81 +87,6 @@ class _MetaLink(Static):
 
 
 class DeckDetailScreen(Screen):
-    DEFAULT_CSS = """
-    DeckDetailScreen {
-        layout: vertical;
-    }
-    #detail-bar {
-        height: 3;
-        padding: 0 2;
-        background: $primary 10%;
-    }
-    #detail-bar .title {
-        width: 1fr;
-        content-align: left middle;
-        text-style: bold;
-        color: $primary;
-    }
-    #detail-bar Button {
-        margin: 0 0 0 1;
-    }
-    #detail-body {
-        padding: 1 2 1 4;
-    }
-    #detail-body > * {
-        margin-right: 2;
-    }
-    .meta-row {
-        height: 1;
-        width: 1fr;
-    }
-    /* Fixed-width prefix so "Remote repository:", "Local folder:", and
-       "Anki deck file:" all line up vertically and the links share a left edge. */
-    .meta-prefix {
-        width: 20;
-        color: $text-muted;
-    }
-    .card-title {
-        text-style: bold;
-        padding-bottom: 1;
-    }
-    .deck-status-line {
-        text-style: bold;
-        padding-bottom: 1;
-    }
-    .action-card {
-        height: auto;
-        border: round $panel-darken-1;
-        padding: 1 2;
-        margin-bottom: 1;
-    }
-    .action-card:dark {
-        border: round $surface-lighten-2;
-    }
-    .action-card Button {
-        min-width: 30;
-        margin-bottom: 1;
-    }
-    .action-card .action-help {
-        color: $text-muted;
-    }
-    .action-card.disabled .action-help {
-        color: $text-muted 50%;
-    }
-    #apkg-row {
-        display: none;
-    }
-    DeckDetailScreen.has-build #apkg-row {
-        display: block;
-    }
-    #download-card .build-row {
-        display: none;
-    }
-    DeckDetailScreen.has-build #download-card .build-row {
-        display: block;
-    }
-    """
-
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
     ]
@@ -197,12 +107,12 @@ class DeckDetailScreen(Screen):
     # ---------- compose ---------- #
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="detail-bar"):
+        with Horizontal(id="detail-bar", classes="app-bar"):
             yield Static(self._deck.nickname, classes="title")
             yield Button("◀ Back", id="back")
 
         with VerticalScroll(id="detail-body"):
-            with Vertical(classes="action-card", id="links-card"):
+            with Vertical(classes="action-card card", id="links-card"):
                 yield Static("Click to open", classes="card-title")
                 with Horizontal(classes="meta-row"):
                     yield Static("Remote repository: ", classes="meta-prefix")
@@ -224,7 +134,7 @@ class DeckDetailScreen(Screen):
             yield UpdatesPanel(id="updates-panel")
 
             # Download / Update card — also auto-builds the .apkg on success.
-            with Vertical(classes="action-card", id="download-card"):
+            with Vertical(classes="action-card card", id="download-card"):
                 yield Static(
                     self._status_line(),
                     classes="deck-status-line",
@@ -239,7 +149,7 @@ class DeckDetailScreen(Screen):
                 yield Static(self._download_help(), classes="action-help", id="download-help")
 
             # Filtered decks card — always shown so the action is discoverable.
-            with Vertical(classes="action-card", id="filtered-card"):
+            with Vertical(classes="action-card card", id="filtered-card"):
                 yield Button(
                     self._filtered_decks_button_label(),
                     id="filtered",
@@ -259,7 +169,7 @@ class DeckDetailScreen(Screen):
             yield LogPanel()
 
             # Remove this deck — destructive, lives at the bottom of the screen.
-            with Vertical(classes="action-card", id="remove-card"):
+            with Vertical(classes="action-card card", id="remove-card"):
                 yield Button(
                     "Remove this deck", id="remove-deck", variant="error"
                 )
@@ -297,7 +207,7 @@ class DeckDetailScreen(Screen):
     def _status_line(self) -> str:
         if self._deck.status is DeckStatus.NOT_DOWNLOADED:
             return "Status: Not downloaded yet"
-        downloaded = f"Last download: {_humanize(self._deck.last_pulled_at)}"
+        downloaded = f"Last download: {humanize_age(self._deck.last_pulled_at)}"
         if self._deck.status is DeckStatus.UPDATES_AVAILABLE:
             status = f"Status: {self._deck.updates_available} updates available"
         else:
@@ -353,8 +263,8 @@ class DeckDetailScreen(Screen):
             "\n"
             "\"Set up filtered decks\" adds them to your Anki collection.\n"
             "\n"
-            "\"Rebuild all\" refreshes the cards inside the "
-            "existing ones to match the latest deck contents.\n"
+            "\"Rebuild all\" updates the cards inside the "
+            "existing ones by re-applying their filters.\n"
             "\n"
             "Anki must be closed first."
         )
@@ -961,8 +871,8 @@ class DeckDetailScreen(Screen):
     def _scroll_to_download_card(self) -> None:
         try:
             self.query_one("#download-card").scroll_visible(animate=False, top=True)
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug("#download-card not in DOM during scroll")
 
     def _show_build_result(self, apkg: Path, *, scroll: bool = True) -> None:
         """Reveal the apkg meta-row link + Import-to-Anki button.
@@ -978,15 +888,15 @@ class DeckDetailScreen(Screen):
             if scroll:
                 self.query_one("#download-card").scroll_visible(animate=False)
             self._refresh_button_variants()
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug("build-result UI not in DOM (#apkg-link / #download-card)")
 
     def _hide_build_result(self) -> None:
         try:
             self.remove_class("has-build")
             self._refresh_button_variants()
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug("hide-build-result: query refs not in DOM")
 
     def _refresh_button_variants(self) -> None:
         """Highlight the action that makes sense for the current deck state.
@@ -998,7 +908,8 @@ class DeckDetailScreen(Screen):
         try:
             download = self.query_one("#download", Button)
             import_btn = self.query_one("#open-in-anki", Button)
-        except Exception:
+        except NoMatches:
+            self.log.debug("button-variant refs not in DOM (#download / #open-in-anki)")
             return
         status = self._deck.status
         if status is DeckStatus.UPDATES_AVAILABLE or status is DeckStatus.NOT_DOWNLOADED:
@@ -1085,7 +996,8 @@ class DeckDetailScreen(Screen):
         for btn_id in ("download", "filtered", "rebuild-filtered"):
             try:
                 btn = self.query_one(f"#{btn_id}", Button)
-            except Exception:
+            except NoMatches:
+                self.log.debug(f"#{btn_id} not in DOM during enable/disable")
                 continue
             if btn_id in ("filtered", "rebuild-filtered") and self._filtered_decks_disabled():
                 btn.disabled = True
@@ -1102,6 +1014,6 @@ class DeckDetailScreen(Screen):
             filtered_btn.disabled = self._filtered_decks_disabled()
             self.query_one("#rebuild-filtered", Button).disabled = self._filtered_decks_disabled()
             self.query_one("#filtered-help", Static).update(self._filtered_decks_help_text())
-        except Exception:
-            pass
+        except NoMatches:
+            self.log.debug("status-line refs not in DOM during refresh")
         self._refresh_button_variants()
