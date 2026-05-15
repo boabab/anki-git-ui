@@ -68,5 +68,7 @@ EOF
 chmod +x "$APPDIR/AppRun"
 
 OUT="$DIST/AnkiGitUI-x86_64.AppImage"
-( cd "$DIST" && ARCH=x86_64 appimagetool "$APPDIR" "$OUT" )
+# --appimage-extract-and-run lets appimagetool (itself an AppImage) work
+# without libfuse2 installed. Ubuntu 24.04 runners no longer ship FUSE 2.
+( cd "$DIST" && ARCH=x86_64 appimagetool --appimage-extract-and-run "$APPDIR" "$OUT" )
 echo "Built $OUT"

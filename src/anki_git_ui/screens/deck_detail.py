@@ -24,7 +24,7 @@ from yaml import YAMLError, safe_load
 
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
 from ..domain.deck_ops import delete_deck_files
-from ..domain.text_utils import truncate
+from ..domain.text_utils import format_path, truncate
 from ..domain.git_ops import CloneProgress, GitError
 from ..domain.models import DeckEntry, DeckStatus
 from ..widgets.log_panel import LogPanel
@@ -212,7 +212,7 @@ class DeckDetailScreen(Screen):
                 with Horizontal(classes="meta-row"):
                     yield Static("Local folder: ", classes="meta-prefix")
                     yield _MetaLink(
-                        str(self._deck.local_path),
+                        format_path(self._deck.local_path),
                         on_open=self._open_local_folder,
                     )
                 with Horizontal(classes="meta-row", id="apkg-row"):
@@ -414,7 +414,7 @@ class DeckDetailScreen(Screen):
 
     def _open_local_folder(self) -> None:
         if reveal_in_file_manager(self._deck.local_path):
-            self.app.notify(str(self._deck.local_path), title="Opened Folder")
+            self.app.notify(format_path(self._deck.local_path), title="Opened Folder")
         else:
             self.app.notify(
                 f"Couldn't open {self._deck.local_path}.", severity="warning"
@@ -1012,7 +1012,7 @@ class DeckDetailScreen(Screen):
         if self._apkg_path is None:
             return
         if reveal_in_file_manager(self._apkg_path):
-            self.app.notify(str(self._apkg_path), title="Opened Folder")
+            self.app.notify(format_path(self._apkg_path), title="Opened Folder")
         else:
             self.app.notify(
                 f"Couldn't open {self._apkg_path}.", severity="warning"

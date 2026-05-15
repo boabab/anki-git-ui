@@ -9,10 +9,10 @@ Status as of 2026-05-10:
 
 | OS / arch | `--onefile` works? | Verified by |
 |---|---|---|
-| macOS arm64 | **Yes** | Local build on M1 Mac, `ANKI_GIT_UI_SMOKE=1 anki-git-ui-bin` prints expected output. `_rsbridge.so` resolves under `_MEIPASS` automatically. |
-| macOS x86_64 | Untested | Build via GitHub Actions `macos-13` runner before M8. |
-| Linux x86_64 | Untested | Build inside `manylinux_2_28` (or `ubuntu-latest`) before M8. |
-| Windows x86_64 | Untested | Build via GitHub Actions `windows-latest` before M8. |
+| macOS arm64 | **Yes** | GitHub Actions `macos-latest` runner; `ANKI_GIT_UI_SMOKE=1` smoke passes; `_rsbridge.so` resolves under `_MEIPASS` automatically. |
+| macOS x86_64 | Not shipped | GitHub's free `macos-13` runner pool became unreliable in 2026; Intel users install from source. |
+| Linux x86_64 | **Yes** | GitHub Actions `ubuntu-latest`, packaged as AppImage. |
+| Windows x86_64 | **Yes** | GitHub Actions `windows-latest`, packaged as `.exe` in a zip. |
 
 **No fallback to `--onedir` is currently needed.** If a future build fails
 because `_rsbridge.so` isn't found at runtime, the runtime hook at
@@ -45,10 +45,13 @@ launches the Textual app interactively (which requires a TTY).
 * **`genanki` ships data files** (SQL schema, default templates).
   `collect_all("genanki")` is needed even though it has no native deps.
 * **Apple Silicon vs Intel:** PyInstaller produces a single-arch binary
-  matching the build host. Universal2 is possible (`target_arch=universal2`
-  in the spec) but the `anki` wheel ships separate arm64 and x86_64
-  binaries, so the easier path is two CI matrix entries — `macos-13` for
-  Intel and `macos-14` (or newer) for Apple Silicon.
+  matching the build host. We currently ship only arm64 because GitHub's
+  free `macos-13` runner pool is unreliable in 2026 and Apple stopped
+  selling Intel Macs in 2023. If demand returns, two paths exist: re-add
+  `macos-13` to the matrix (and accept the queueing risk), or build a
+  universal2 binary on arm64 — the `anki` wheel ships separate arm64 and
+  x86_64 binaries, so universal2 requires installing both wheels and
+  setting `target_arch=universal2` in the spec.
 * **macOS Gatekeeper:** ad-hoc-signed `.app` bundles require right-click →
   Open on first launch. Notarization (which would bypass that) needs an
   Apple Developer ID and is M8+ scope.
