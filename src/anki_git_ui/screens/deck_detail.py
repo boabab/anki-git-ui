@@ -263,8 +263,8 @@ class DeckDetailScreen(Screen):
             "\n"
             "\"Set up filtered decks\" adds them to your Anki collection.\n"
             "\n"
-            "\"Rebuild all\" refreshes the cards inside the "
-            "existing ones to match the latest deck contents.\n"
+            "\"Rebuild all\" updates the cards inside the "
+            "existing ones by re-applying their filters.\n"
             "\n"
             "Anki must be closed first."
         )
