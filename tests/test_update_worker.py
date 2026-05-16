@@ -1,4 +1,4 @@
-"""Tests for the update_deck_worker."""
+"""Tests for the update flow — worker wrapper and the underlying git_ops outcome."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from anki_git_ui.domain.git_ops import GitError, fetch, pull_ff_only, update_status
+from anki_git_ui.domain import git_ops
+from anki_git_ui.domain.git_ops import (
+    UpdateFailed,
+    UpdateSucceeded,
+)
 from anki_git_ui.domain.models import DeckEntry, DeckStatus
 from anki_git_ui.workers.download_deck_worker import download_deck
 from anki_git_ui.workers.update_deck_worker import update_deck
@@ -53,8 +57,9 @@ def test_update_deck_no_changes(tmp_path: Path, remote_with_one_commit: Path) ->
     download_deck(deck)
     pre = deck.last_pulled_commit
     log: list[str] = []
-    result = update_deck(deck, on_log=log.append)
-    assert result.no_changes is True
+    outcome = update_deck(deck, on_log=log.append)
+    assert isinstance(outcome, UpdateSucceeded)
+    assert outcome.advanced is False
     assert deck.last_pulled_commit == pre
     assert any("Already up to date" in line for line in log)
 
@@ -79,35 +84,16 @@ def test_update_deck_pulls_new_commit(tmp_path: Path, remote_with_one_commit: Pa
     _git("commit", "-m", "second commit", cwd=upstream_work)
     _git("push", cwd=upstream_work)
 
-    result = update_deck(deck)
-    assert result.no_changes is False
+    outcome = update_deck(deck)
+    assert isinstance(outcome, UpdateSucceeded)
+    assert outcome.advanced is True
     assert deck.last_pulled_commit != pre
     assert (deck.local_path / "newfile.txt").is_file()
 
 
-def test_update_status_reports_behind(tmp_path: Path, remote_with_one_commit: Path) -> None:
-    deck_path = tmp_path / "deck"
-    _git("clone", str(remote_with_one_commit), str(deck_path))
-
-    # Add a commit upstream WITHOUT touching deck_path.
-    other = tmp_path / "other"
-    _git("clone", str(remote_with_one_commit), str(other))
-    _git("config", "user.email", "tests@example.com", cwd=other)
-    _git("config", "user.name", "tests", cwd=other)
-    (other / "x.txt").write_text("x\n", encoding="utf-8")
-    _git("add", "-A", cwd=other)
-    _git("commit", "-m", "ahead", cwd=other)
-    _git("push", cwd=other)
-
-    fetch(deck_path)
-    status = update_status(deck_path)
-    assert status.upstream_known is True
-    assert status.behind == 1
-    assert status.ahead == 0
-    assert status.dirty is False
-
-
-def test_pull_ff_only_refuses_diverged(tmp_path: Path, remote_with_one_commit: Path) -> None:
+def test_update_deck_returns_failed_on_diverged(
+    tmp_path: Path, remote_with_one_commit: Path
+) -> None:
     deck_path = tmp_path / "deck"
     _git("clone", str(remote_with_one_commit), str(deck_path))
     _git("config", "user.email", "tests@example.com", cwd=deck_path)
@@ -128,6 +114,6 @@ def test_pull_ff_only_refuses_diverged(tmp_path: Path, remote_with_one_commit: P
     _git("commit", "-m", "remote-only", cwd=other)
     _git("push", cwd=other)
 
-    with pytest.raises(GitError, match="Local changes"):
-        fetch(deck_path)
-        pull_ff_only(deck_path)
+    outcome = git_ops.update_deck(deck_path)
+    assert isinstance(outcome, UpdateFailed)
+    assert "Local changes" in outcome.message

@@ -1,35 +1,23 @@
 """High-level orchestration for "download a deck for the first time".
 
-Wraps :func:`anki_git_ui.domain.git_ops.clone` with the bookkeeping the
-dashboard cares about: capturing the resulting HEAD sha and branch name so
-the deck card can show "up to date — already prepared" precisely. Pure
-function — no Textual imports — so it can be tested without spinning up
-the app.
+Wraps :func:`anki_git_ui.domain.git_ops.clone_deck` with the bookkeeping the
+dashboard cares about: stamping the resulting HEAD sha, branch, and pulled-at
+timestamp onto the :class:`DeckEntry`. Pure function — no Textual imports —
+so it can be tested without spinning up the app.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ..domain.git_ops import (
+    CloneOutcome,
     CloneProgress,
-    GitError,
-    clone,
-    head_branch,
-    head_commit,
+    CloneSucceeded,
+    clone_deck,
 )
 from ..domain.models import DeckEntry
-
-
-@dataclass
-class DownloadResult:
-    head_commit: str | None
-    head_branch: str | None
-    pulled_at: datetime
-    error: GitError | None = None
 
 
 def download_deck(
@@ -37,50 +25,22 @@ def download_deck(
     *,
     on_log: Callable[[str], None] | None = None,
     on_progress: Callable[[CloneProgress], None] | None = None,
-) -> DownloadResult:
-    """Clone ``deck.url`` into ``deck.local_path`` and resolve HEAD.
+) -> CloneOutcome:
+    """Clone ``deck.url`` into ``deck.local_path`` and stamp HEAD onto ``deck``.
 
-    Mutates the passed ``deck`` in place — fills in ``branch``,
-    ``last_pulled_commit``, and ``last_pulled_at`` on success.
-
-    Friendly :class:`anki_git_ui.domain.git_ops.GitError` failures (bad URL,
-    private repo, network, etc.) are caught and returned via
-    ``DownloadResult.error`` so Textual treats the worker as successful and
-    doesn't dump a traceback. The caller checks ``result.error`` and
-    surfaces a modal.
+    Mutates the passed ``deck`` in place on success — fills in ``branch``,
+    ``last_pulled_commit``, and ``last_pulled_at``. On failure the deck is
+    left untouched and the caller can read ``CloneFailed.message`` to render
+    a modal.
     """
-    if on_log is not None:
-        on_log(f"git clone --progress {deck.url} {deck.local_path}")
-
-    try:
-        clone(
-            deck.url,
-            deck.local_path,
-            on_line=on_log,
-            on_progress=on_progress,
-        )
-    except GitError as exc:
-        if on_log is not None:
-            on_log(f"Clone failed: {exc}")
-        return DownloadResult(
-            head_commit=None,
-            head_branch=None,
-            pulled_at=datetime.now(timezone.utc),
-            error=exc,
-        )
-
-    sha = head_commit(deck.local_path)
-    branch = head_branch(deck.local_path)
-    pulled_at = datetime.now(timezone.utc)
-
-    deck.branch = branch or deck.branch
-    deck.last_pulled_commit = sha
-    deck.last_pulled_at = pulled_at
-
-    if on_log is not None:
-        on_log(f"Done — at branch {branch or '?'}, commit {sha[:7] if sha else '?'}.")
-
-    return DownloadResult(head_commit=sha, head_branch=branch, pulled_at=pulled_at)
+    outcome = clone_deck(
+        deck.url, deck.local_path, on_log=on_log, on_progress=on_progress
+    )
+    if isinstance(outcome, CloneSucceeded):
+        deck.branch = outcome.branch or deck.branch
+        deck.last_pulled_commit = outcome.commit
+        deck.last_pulled_at = outcome.pulled_at
+    return outcome
 
 
 def _url_basename(url: str) -> str:

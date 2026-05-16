@@ -12,7 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Input, Static
 from textual.worker import Worker, WorkerState
 
-from ..domain.git_ops import GitError, verify_gitify_repo
+from ..domain.git_ops import RemoteFailed, RemoteOutcome, verify_anki_gitify_remote
 from ..domain.models import DeckEntry, DeckStatus
 from ..workers.download_deck_worker import deck_local_path, deck_nickname
 
@@ -124,7 +124,7 @@ class AddDeckScreen(Screen):
             self._verifying = True
             self.app.notify("Checking the link and looking for gitify.yml…", timeout=3)
             self.run_worker(
-                lambda: verify_gitify_repo(self._url),
+                lambda: verify_anki_gitify_remote(self._url),
                 thread=True,
                 exclusive=True,
                 group="add-deck-verify",
@@ -207,10 +207,10 @@ class AddDeckScreen(Screen):
                 severity="error",
             )
             return
-        err: GitError | None = event.worker.result
-        if err is not None:
+        outcome: RemoteOutcome = event.worker.result
+        if isinstance(outcome, RemoteFailed):
             self.app.notify(
-                str(err),
+                outcome.message,
                 title="Link is not valid",
                 severity="error",
             )

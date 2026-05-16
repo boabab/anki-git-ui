@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from anki_git_ui.domain.git_ops import CloneSucceeded
 from anki_git_ui.domain.models import DeckEntry, DeckStatus
 from anki_git_ui.workers.download_deck_worker import (
     _url_basename,
@@ -67,11 +68,12 @@ def test_download_deck_populates_deck_fields(tmp_path: Path, local_git_remote: P
         status=DeckStatus.NOT_DOWNLOADED,
     )
     log_lines: list[str] = []
-    result = download_deck(deck, on_log=log_lines.append)
+    outcome = download_deck(deck, on_log=log_lines.append)
 
-    assert result.head_commit is not None and len(result.head_commit) == 40
-    assert result.head_branch == "main"
-    assert deck.last_pulled_commit == result.head_commit
+    assert isinstance(outcome, CloneSucceeded)
+    assert len(outcome.commit) == 40
+    assert outcome.branch == "main"
+    assert deck.last_pulled_commit == outcome.commit
     assert deck.branch == "main"
     assert deck.last_pulled_at is not None
     assert (deck.local_path / ".git").is_dir()

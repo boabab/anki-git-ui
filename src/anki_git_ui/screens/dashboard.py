@@ -123,7 +123,7 @@ class DashboardScreen(Screen):
             if deck.status is DeckStatus.NOT_DOWNLOADED:
                 continue
             result = check_for_updates(deck)
-            if result.error is not None:
+            if result.failure is not None:
                 continue
             new_count = sum(1 for c in result.commits if c.is_new)
             if new_count > 0:

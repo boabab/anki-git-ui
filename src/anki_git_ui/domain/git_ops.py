@@ -1,9 +1,18 @@
 """Subprocess wrappers around system ``git``.
 
-This is the only file in the project that imports :mod:`subprocess`. Each
-function returns a structured result and never prints. Streaming variants
-(``clone``, ``fetch``, ``pull``) accept ``on_line`` / ``on_progress``
-callbacks for the log panel.
+This is the only file in the project that imports :mod:`subprocess`. It
+exposes a small set of outcome-returning functions; none of them raise. See
+[docs/adr/0002-collapsed-git-interface.md](../../../docs/adr/0002-collapsed-git-interface.md)
+for the rationale behind this shape.
+
+Public surface:
+
+- :func:`detect_git` — best-effort PATH probe for the welcome screen.
+- :func:`clone_deck` — clone + capture HEAD; returns :class:`CloneOutcome`.
+- :func:`update_deck` — fetch + fast-forward pull; returns :class:`UpdateOutcome`.
+- :func:`list_recent_commits` — list commits, with an optional pre-fetch step;
+  returns :class:`CommitsOutcome`.
+- :func:`verify_anki_gitify_remote` — pre-clone probe; returns :class:`RemoteOutcome`.
 """
 
 from __future__ import annotations
@@ -13,7 +22,9 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 
@@ -53,54 +64,319 @@ def detect_git() -> GitDetection:
     return GitDetection(found=True, version=version)
 
 
-# ---------- Errors ---------- #
+# ---------- Progress ---------- #
 
 
-class GitError(RuntimeError):
-    """Base class for git operation failures the UI should surface as a friendly modal."""
+@dataclass(frozen=True)
+class CloneProgress:
+    """One progress tick parsed from ``git clone --progress`` output."""
+
+    phase: str  # "Counting", "Compressing", "Receiving", "Resolving"
+    percent: int | None  # 0–100, or None if git didn't include one
+    message: str  # raw line, stripped
 
 
-class GitNotFoundError(GitError):
-    """``git`` binary not on PATH."""
+# ---------- Outcome types ---------- #
 
 
-class GitAuthError(GitError):
-    """Authentication failure — almost always a private repo without creds."""
+class GitFailureKind(str, Enum):
+    """Why a git operation failed.
+
+    Flat enum carried on every ``*Failed`` outcome, replacing the previous
+    seven-class ``GitError`` hierarchy. The string value lets callers compare
+    to literals if they want, but most code should use the enum members.
+    """
+
+    AUTH = "auth"
+    NETWORK = "network"
+    REPO_NOT_FOUND = "repo_not_found"
+    NOT_ANKI_GITIFY = "not_anki_gitify"
+    UNSUPPORTED_URL = "unsupported_url"
+    UNKNOWN = "unknown"
 
 
-class GitNetworkError(GitError):
-    """DNS/connection failure."""
+@dataclass(frozen=True)
+class CloneSucceeded:
+    commit: str
+    branch: str | None
+    pulled_at: datetime
 
 
-class GitUnsupportedUrlError(GitError):
-    """URL scheme isn't supported (ssh://, git@…, file://, etc.)."""
+@dataclass(frozen=True)
+class CloneFailed:
+    kind: GitFailureKind
+    message: str
 
 
-class GitRepoNotFoundError(GitError):
-    """Remote returned a 404 or similar — the URL doesn't point at a git repo."""
+CloneOutcome = CloneSucceeded | CloneFailed
 
 
-class GitNotAnkiGitifyError(GitError):
-    """Remote is reachable but has no top-level ``gitify.yml`` — not an anki-gitify deck."""
+@dataclass(frozen=True)
+class UpdateSucceeded:
+    commit: str
+    branch: str | None
+    pulled_at: datetime
+    advanced: bool  # True iff HEAD moved
 
 
-# ---------- Remote verification ---------- #
+@dataclass(frozen=True)
+class UpdateFailed:
+    kind: GitFailureKind
+    message: str
 
 
-def verify_remote(url: str, *, timeout: float = 15.0) -> GitError | None:
-    """Check that ``url`` points to an accessible git remote.
+UpdateOutcome = UpdateSucceeded | UpdateFailed
 
-    Runs ``git ls-remote --exit-code <url>`` — a lightweight network probe
-    that doesn't create any local state. Returns ``None`` on success, or a
-    :class:`GitError` subclass (mapped via :func:`_classify_clone_error` so
-    the friendly message matches what a real clone would have produced).
+
+@dataclass(frozen=True)
+class Commit:
+    """One row in a commit listing."""
+
+    sha: str  # full 40-char sha
+    short: str  # 7-char short sha
+    date: str
+    subject: str
+
+    @property
+    def display(self) -> str:
+        return f"{self.short}  {self.date}  {self.subject}"
+
+
+@dataclass(frozen=True)
+class CommitsListed:
+    commits: list[Commit] = field(default_factory=list)
+    branch: str | None = None  # local HEAD branch at listing time
+
+
+@dataclass(frozen=True)
+class CommitsFailed:
+    kind: GitFailureKind
+    message: str
+
+
+CommitsOutcome = CommitsListed | CommitsFailed
+
+
+@dataclass(frozen=True)
+class RemoteOk:
+    pass
+
+
+@dataclass(frozen=True)
+class RemoteFailed:
+    kind: GitFailureKind
+    message: str
+
+
+RemoteOutcome = RemoteOk | RemoteFailed
+
+
+# ---------- Public functions ---------- #
+
+
+def clone_deck(
+    url: str,
+    dest: Path,
+    *,
+    on_log: Callable[[str], None] | None = None,
+    on_progress: Callable[[CloneProgress], None] | None = None,
+    timeout: float = 600.0,
+) -> CloneOutcome:
+    """Clone ``url`` into ``dest`` (which must not already exist) and capture HEAD."""
+    git = shutil.which("git")
+    if git is None:
+        return CloneFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message=(
+                "We need git to download decks, but it's not installed. "
+                "Please install git and try again."
+            ),
+        )
+    if dest.exists():
+        return CloneFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message=(
+                f"The folder {dest} already exists. Choose a different folder "
+                "or remove it first."
+            ),
+        )
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if on_log is not None:
+        on_log(f"git clone --progress {url} {dest}")
+
+    captured, returncode = _stream_git(
+        [git, "clone", "--progress", "--", url, str(dest)],
+        on_log=on_log,
+        on_progress=on_progress,
+        timeout=timeout,
+    )
+    if returncode is None:
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        return CloneFailed(
+            kind=GitFailureKind.NETWORK,
+            message="Download timed out. Please check your connection and try again.",
+        )
+    if returncode != 0:
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        kind, message = _classify_clone_error("\n".join(captured), returncode)
+        if on_log is not None:
+            on_log(f"Clone failed: {message}")
+        return CloneFailed(kind=kind, message=message)
+
+    sha = _head_commit(dest)
+    branch = _head_branch(dest)
+    pulled_at = datetime.now(timezone.utc)
+    if sha is None:
+        return CloneFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message="Cloned the repo but couldn't read its HEAD commit.",
+        )
+    if on_log is not None:
+        on_log(f"Done — at branch {branch or '?'}, commit {sha[:7]}.")
+    return CloneSucceeded(commit=sha, branch=branch, pulled_at=pulled_at)
+
+
+def update_deck(
+    repo: Path,
+    *,
+    on_log: Callable[[str], None] | None = None,
+    timeout: float = 600.0,
+) -> UpdateOutcome:
+    """Fetch from origin and fast-forward-pull ``repo``.
+
+    ``UpdateSucceeded.advanced`` is ``True`` iff HEAD moved. A non-fast-forward
+    error (local divergence) surfaces as ``UpdateFailed`` with a friendly
+    "remove and re-add" message.
     """
     git = shutil.which("git")
     if git is None:
-        return GitNotFoundError(
-            "We need git to download decks, but it's not installed. Please install git "
-            "and try again."
+        return UpdateFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message="git isn't available — please install it and try again.",
         )
+
+    previous = _head_commit(repo)
+
+    if on_log is not None:
+        on_log(f"git -C {repo} fetch --prune")
+    failure = _run_op(
+        [git, "-C", str(repo), "fetch", "--prune", "--progress"],
+        on_log=on_log,
+        timeout=timeout,
+        op_name="fetch",
+    )
+    if failure is not None:
+        kind, message = failure
+        if on_log is not None:
+            on_log(f"Update failed: {message}")
+        return UpdateFailed(kind=kind, message=message)
+
+    if on_log is not None:
+        on_log(f"git -C {repo} pull --ff-only")
+    failure = _run_op(
+        [git, "-C", str(repo), "pull", "--ff-only", "--progress"],
+        on_log=on_log,
+        timeout=timeout,
+        op_name="pull",
+        # pull writes "Already up to date." / "Fast-forward" to stdout — keep
+        # the pipe so the buffer doesn't fill, but don't read it.
+        keep_stdout=True,
+    )
+    if failure is not None:
+        kind, message = failure
+        if on_log is not None:
+            on_log(f"Update failed: {message}")
+        return UpdateFailed(kind=kind, message=message)
+
+    sha = _head_commit(repo)
+    branch = _head_branch(repo)
+    pulled_at = datetime.now(timezone.utc)
+    if sha is None:
+        return UpdateFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message="Pulled the repo but couldn't read its HEAD commit.",
+        )
+    advanced = sha != previous
+    if on_log is not None:
+        on_log(f"Updated to {sha[:7]}." if advanced else "Already up to date.")
+    return UpdateSucceeded(
+        commit=sha, branch=branch, pulled_at=pulled_at, advanced=advanced
+    )
+
+
+def list_recent_commits(
+    repo: Path,
+    *,
+    ref: str | None = None,
+    limit: int = 20,
+    fetch_first: bool = False,
+    on_log: Callable[[str], None] | None = None,
+    timeout: float = 600.0,
+) -> CommitsOutcome:
+    """List recent commits on ``repo``.
+
+    Modes:
+    - ``ref`` given: list commits reachable from that ref.
+    - ``ref=None, fetch_first=False``: list commits from local ``HEAD``.
+    - ``ref=None, fetch_first=True``: fetch origin first, then list commits
+      from ``origin/<local-branch>`` — the "check for updates" path.
+
+    The branch in :class:`CommitsListed` is always the local HEAD branch at
+    listing time, suitable for UI display regardless of mode.
+    """
+    git = shutil.which("git")
+    if git is None or not (repo / ".git").exists():
+        return CommitsFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message="git is not available or this folder isn't a git repo.",
+        )
+
+    if fetch_first:
+        if on_log is not None:
+            on_log(f"git -C {repo} fetch --prune")
+        failure = _run_op(
+            [git, "-C", str(repo), "fetch", "--prune", "--progress"],
+            on_log=on_log,
+            timeout=timeout,
+            op_name="fetch",
+        )
+        if failure is not None:
+            kind, message = failure
+            return CommitsFailed(kind=kind, message=message)
+
+    branch = _head_branch(repo)
+    if ref is not None:
+        effective_ref = ref
+    elif fetch_first and branch is not None:
+        effective_ref = f"origin/{branch}"
+    else:
+        effective_ref = "HEAD"
+
+    commits = _git_log(repo, ref=effective_ref, limit=limit)
+    return CommitsListed(commits=commits, branch=branch)
+
+
+def verify_anki_gitify_remote(url: str, *, timeout: float = 30.0) -> RemoteOutcome:
+    """Verify ``url`` is reachable and contains a top-level ``gitify.yml``.
+
+    Runs a connectivity probe (``git ls-remote``), then a blobless shallow
+    clone into a temp dir to check the root tree for ``gitify.yml``. Only
+    commit and tree objects are fetched.
+    """
+    git = shutil.which("git")
+    if git is None:
+        return RemoteFailed(
+            kind=GitFailureKind.UNKNOWN,
+            message=(
+                "We need git to download decks, but it's not installed. "
+                "Please install git and try again."
+            ),
+        )
+
     try:
         proc = subprocess.run(
             [git, "ls-remote", "--exit-code", "--quiet", "--", url],
@@ -110,36 +386,19 @@ def verify_remote(url: str, *, timeout: float = 15.0) -> GitError | None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return GitNetworkError(
-            "Checking the link timed out. Please check your connection and try again."
+        return RemoteFailed(
+            kind=GitFailureKind.NETWORK,
+            message="Checking the link timed out. Please check your connection and try again.",
         )
     except OSError as exc:
-        return GitError(f"Could not run git: {exc}")
-    if proc.returncode == 0:
-        return None
-    return _classify_clone_error(proc.stderr or proc.stdout, proc.returncode)
-
-
-def verify_gitify_repo(url: str, *, timeout: float = 30.0) -> GitError | None:
-    """Verify ``url`` is an accessible repo containing a top-level ``gitify.yml``.
-
-    Runs :func:`verify_remote` for connectivity, then performs a blobless
-    shallow clone into a temp dir (``--depth 1 --filter=blob:none
-    --no-checkout``) and checks the root tree for ``gitify.yml`` via
-    ``git ls-tree``. Only commit and tree objects are fetched — the
-    ``gitify.yml`` blob itself is never downloaded. Returns ``None`` on
-    success or a :class:`GitError` subclass on failure.
-    """
-    err = verify_remote(url, timeout=timeout)
-    if err is not None:
-        return err
-
-    git = shutil.which("git")
-    if git is None:  # already covered by verify_remote, but keep the type-check happy
-        return GitNotFoundError(
-            "We need git to download decks, but it's not installed. Please install git "
-            "and try again."
+        return RemoteFailed(
+            kind=GitFailureKind.UNKNOWN, message=f"Could not run git: {exc}"
         )
+    if proc.returncode != 0:
+        kind, message = _classify_clone_error(
+            proc.stderr or proc.stdout, proc.returncode
+        )
+        return RemoteFailed(kind=kind, message=message)
 
     with tempfile.TemporaryDirectory(
         prefix="anki-git-ui-verify-", ignore_cleanup_errors=True
@@ -164,13 +423,19 @@ def verify_gitify_repo(url: str, *, timeout: float = 30.0) -> GitError | None:
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return GitNetworkError(
-                "Checking the link timed out. Please check your connection and try again."
+            return RemoteFailed(
+                kind=GitFailureKind.NETWORK,
+                message="Checking the link timed out. Please check your connection and try again.",
             )
         except OSError as exc:
-            return GitError(f"Could not run git: {exc}")
+            return RemoteFailed(
+                kind=GitFailureKind.UNKNOWN, message=f"Could not run git: {exc}"
+            )
         if proc.returncode != 0:
-            return _classify_clone_error(proc.stderr or proc.stdout, proc.returncode)
+            kind, message = _classify_clone_error(
+                proc.stderr or proc.stdout, proc.returncode
+            )
+            return RemoteFailed(kind=kind, message=message)
 
         try:
             ls = subprocess.run(
@@ -190,31 +455,27 @@ def verify_gitify_repo(url: str, *, timeout: float = 30.0) -> GitError | None:
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return GitNetworkError(
-                "Checking the link timed out. Please check your connection and try again."
+            return RemoteFailed(
+                kind=GitFailureKind.NETWORK,
+                message="Checking the link timed out. Please check your connection and try again.",
             )
         except OSError as exc:
-            return GitError(f"Could not run git: {exc}")
-        if ls.returncode != 0 or not ls.stdout.strip():
-            return GitNotAnkiGitifyError(
-                "This repository doesn't contain a 'gitify.yml' file at its root, so it "
-                "doesn't look like an anki-gitify deck. Only decks prepared with "
-                "anki-gitify can be used here."
+            return RemoteFailed(
+                kind=GitFailureKind.UNKNOWN, message=f"Could not run git: {exc}"
             )
+        if ls.returncode != 0 or not ls.stdout.strip():
+            return RemoteFailed(
+                kind=GitFailureKind.NOT_ANKI_GITIFY,
+                message=(
+                    "This repository doesn't contain a 'gitify.yml' file at "
+                    "its root, so it doesn't look like an anki-gitify deck. "
+                    "Only decks prepared with anki-gitify can be used here."
+                ),
+            )
+    return RemoteOk()
 
-    return None
 
-
-# ---------- Streaming clone ---------- #
-
-
-@dataclass
-class CloneProgress:
-    """One progress tick parsed from ``git clone --progress`` output."""
-
-    phase: str  # "Counting", "Compressing", "Receiving", "Resolving"
-    percent: int | None  # 0–100, or None if git didn't include one
-    message: str  # raw line, stripped
+# ---------- Private helpers ---------- #
 
 
 _PROGRESS_RE = re.compile(
@@ -235,23 +496,26 @@ def _parse_progress(line: str) -> CloneProgress | None:
     )
 
 
-def _classify_clone_error(stderr: str, returncode: int) -> GitError:
+def _classify_clone_error(
+    stderr: str, returncode: int
+) -> tuple[GitFailureKind, str]:
     text = stderr.lower()
     if (
         "authentication failed" in text
         or "could not read username" in text
         or "permission denied (publickey)" in text
     ):
-        return GitAuthError(
-            "We couldn't download this deck. It looks like the repository is private — "
-            "Anki Community Deck Sync only supports public deck links right now."
+        return GitFailureKind.AUTH, (
+            "We couldn't download this deck. It looks like the repository is "
+            "private — Anki Community Deck Sync only supports public deck "
+            "links right now."
         )
     if (
         "could not resolve host" in text
         or "could not connect" in text
         or "operation timed out" in text
     ):
-        return GitNetworkError(
+        return GitFailureKind.NETWORK, (
             "We couldn't reach the internet. Check your connection and try again."
         )
     if (
@@ -259,69 +523,78 @@ def _classify_clone_error(stderr: str, returncode: int) -> GitError:
         or "repository not found" in text
         or "404" in text
     ):
-        return GitRepoNotFoundError(
-            "We couldn't find anything at that link. Double-check the address — it should "
-            "look like https://github.com/<someone>/<deck-name>."
+        return GitFailureKind.REPO_NOT_FOUND, (
+            "We couldn't find anything at that link. Double-check the "
+            "address — it should look like https://github.com/<someone>/"
+            "<deck-name>."
         )
     if "unsupported" in text and "url" in text:
-        return GitUnsupportedUrlError(
-            "This link uses an address format we don't support. Please use an https:// link "
-            "from a deck's GitHub page."
+        return GitFailureKind.UNSUPPORTED_URL, (
+            "This link uses an address format we don't support. Please use "
+            "an https:// link from a deck's GitHub page."
         )
-    return GitError(
-        f"git clone failed (exit {returncode}). Technical details:\n{stderr.strip() or '(no output)'}"
+    return GitFailureKind.UNKNOWN, (
+        f"git exited with code {returncode}. Technical details:\n"
+        f"{stderr.strip() or '(no output)'}"
     )
 
 
-def clone(
-    url: str,
-    dest: Path,
+def _classify_pull_error(
+    captured: str, returncode: int
+) -> tuple[GitFailureKind, str]:
+    text = captured.lower()
+    if (
+        "non-fast-forward" in text
+        or "diverged" in text
+        or "diverging" in text
+        or "not possible to fast-forward" in text
+    ):
+        # Map "local divergence" to UNKNOWN — the user-facing message tells
+        # them how to recover, so we don't need a dedicated kind.
+        return GitFailureKind.UNKNOWN, (
+            "Local changes were detected in this deck folder, so we can't "
+            "apply the updates safely. To fix this, remove this deck (without "
+            "keeping the files) and add it again."
+        )
+    return _classify_clone_error(captured, returncode)
+
+
+def _stream_git(
+    args: list[str],
     *,
-    on_line: Callable[[str], None] | None = None,
+    on_log: Callable[[str], None] | None,
     on_progress: Callable[[CloneProgress], None] | None = None,
-    timeout: float = 600.0,
-) -> None:
-    """Clone ``url`` into ``dest`` (which must not already exist).
+    timeout: float,
+    keep_stdout: bool = False,
+) -> tuple[list[str], int | None]:
+    """Run git, stream stderr line-by-line, return ``(captured_lines, returncode)``.
 
-    Streams stderr line by line through ``on_line``; parses progress lines
-    and additionally fires ``on_progress``. Raises a :class:`GitError`
-    subclass on failure with a user-friendly message; the caller surfaces
-    it as a modal.
+    ``returncode`` is ``None`` if the process was killed by timeout. ``OSError``
+    from a missing binary surfaces as ``returncode=-1`` with the message in
+    ``captured_lines[0]``.
     """
-    git = shutil.which("git")
-    if git is None:
-        raise GitNotFoundError(
-            "We need git to download decks, but it's not installed. Please install git "
-            "and try again."
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE if keep_stdout else subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
         )
-
-    if dest.exists():
-        raise GitError(
-            f"The folder {dest} already exists. Choose a different folder or remove it first."
-        )
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    proc = subprocess.Popen(
-        [git, "clone", "--progress", "--", url, str(dest)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
+    except OSError as exc:
+        return [f"Could not run git: {exc}"], -1
 
     captured: list[str] = []
     try:
         assert proc.stderr is not None
-        # git emits both `\n` and `\r` for progress; iterate by line where possible.
         for raw in proc.stderr:
             for piece in raw.replace("\r", "\n").split("\n"):
                 line = piece.strip()
                 if not line:
                     continue
                 captured.append(line)
-                if on_line is not None:
-                    on_line(line)
+                if on_log is not None:
+                    on_log(line)
                 if on_progress is not None:
                     pg = _parse_progress(line)
                     if pg is not None:
@@ -329,181 +602,36 @@ def clone(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        raise GitError(
-            "Download timed out. Please check your connection and try again."
-        )
-
-    if proc.returncode != 0:
-        # Best-effort cleanup of the partial clone.
-        if dest.exists():
-            shutil.rmtree(dest, ignore_errors=True)
-        raise _classify_clone_error("\n".join(captured), proc.returncode)
+        return captured, None
+    return captured, proc.returncode
 
 
-# ---------- Update flow: fetch + pull --------- #
-
-
-def fetch(
-    repo: Path,
+def _run_op(
+    args: list[str],
     *,
-    on_line: Callable[[str], None] | None = None,
-    timeout: float = 600.0,
-) -> None:
-    """``git fetch --prune --progress`` for an existing clone."""
-    git = shutil.which("git")
-    if git is None:
-        raise GitNotFoundError("git isn't available — please install it and try again.")
-    proc = subprocess.Popen(
-        [git, "-C", str(repo), "fetch", "--prune", "--progress"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
+    on_log: Callable[[str], None] | None,
+    timeout: float,
+    op_name: str,
+    keep_stdout: bool = False,
+) -> tuple[GitFailureKind, str] | None:
+    """Run a fetch/pull-style streaming op. Returns ``None`` on success or
+    a ``(kind, message)`` tuple on failure."""
+    captured, returncode = _stream_git(
+        args, on_log=on_log, timeout=timeout, keep_stdout=keep_stdout
     )
-    captured: list[str] = []
-    try:
-        assert proc.stderr is not None
-        for raw in proc.stderr:
-            for piece in raw.replace("\r", "\n").split("\n"):
-                line = piece.strip()
-                if not line:
-                    continue
-                captured.append(line)
-                if on_line is not None:
-                    on_line(line)
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise GitError(
-            "git fetch timed out. Please check your connection and try again."
+    if returncode is None:
+        return GitFailureKind.NETWORK, (
+            f"git {op_name} timed out. Please check your connection and try again."
         )
-    if proc.returncode != 0:
-        raise _classify_clone_error("\n".join(captured), proc.returncode)
+    if returncode != 0:
+        text = "\n".join(captured)
+        if op_name == "pull":
+            return _classify_pull_error(text, returncode)
+        return _classify_clone_error(text, returncode)
+    return None
 
 
-def pull_ff_only(
-    repo: Path,
-    *,
-    on_line: Callable[[str], None] | None = None,
-    timeout: float = 600.0,
-) -> None:
-    """``git pull --ff-only --progress`` — refuses non-fast-forward.
-
-    A non-fast-forward error means the local copy diverged from upstream,
-    which shouldn't happen for a deck the user only consumes; surface it as
-    a friendly "please re-download" message.
-    """
-    git = shutil.which("git")
-    if git is None:
-        raise GitNotFoundError("git isn't available — please install it and try again.")
-    proc = subprocess.Popen(
-        [git, "-C", str(repo), "pull", "--ff-only", "--progress"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    captured: list[str] = []
-    try:
-        # pull writes to both stdout and stderr; stream stderr for progress.
-        assert proc.stderr is not None
-        for raw in proc.stderr:
-            for piece in raw.replace("\r", "\n").split("\n"):
-                line = piece.strip()
-                if not line:
-                    continue
-                captured.append(line)
-                if on_line is not None:
-                    on_line(line)
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise GitError(
-            "git pull timed out. Please check your connection and try again."
-        )
-    if proc.returncode != 0:
-        text = "\n".join(captured).lower()
-        if (
-            "non-fast-forward" in text
-            or "diverged" in text
-            or "diverging" in text
-            or "not possible to fast-forward" in text
-        ):
-            raise GitError(
-                "Local changes were detected in this deck folder, so we can't apply the "
-                "updates safely. To fix this, remove this deck (without keeping the files) "
-                "and add it again."
-            )
-        raise _classify_clone_error("\n".join(captured), proc.returncode)
-
-
-@dataclass
-class UpdateStatus:
-    """Result of comparing local HEAD to upstream."""
-
-    upstream_known: bool
-    ahead: int = 0
-    behind: int = 0
-    dirty: bool = False
-    error: str | None = None
-
-
-def update_status(repo: Path) -> UpdateStatus:
-    """Compare local HEAD to upstream — does not fetch.
-
-    Run :func:`fetch` first if you want a fresh comparison. Returns
-    ``upstream_known=False`` for repos that don't have an upstream branch yet
-    (rare for a freshly-cloned consumer deck, but possible if the remote was
-    odd).
-    """
-    git = shutil.which("git")
-    if git is None or not (repo / ".git").exists():
-        return UpdateStatus(upstream_known=False, error="not a git repo")
-
-    # Check upstream
-    p = subprocess.run(
-        [git, "-C", str(repo), "rev-parse", "--abbrev-ref", "@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if p.returncode != 0:
-        return UpdateStatus(upstream_known=False, error="no upstream branch")
-
-    # ahead/behind counts
-    p = subprocess.run(
-        [git, "-C", str(repo), "rev-list", "--left-right", "--count", "HEAD...@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    ahead = behind = 0
-    if p.returncode == 0:
-        parts = p.stdout.strip().split()
-        if len(parts) == 2:
-            try:
-                ahead = int(parts[0])
-                behind = int(parts[1])
-            except ValueError:
-                pass
-
-    # Dirty?
-    p = subprocess.run(
-        [git, "-C", str(repo), "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    dirty = bool(p.stdout.strip())
-
-    return UpdateStatus(upstream_known=True, ahead=ahead, behind=behind, dirty=dirty)
-
-
-# ---------- One-shot helpers ---------- #
-
-
-def head_commit(repo: Path) -> str | None:
-    """Return the full HEAD sha of ``repo``, or ``None`` if not a repo."""
+def _head_commit(repo: Path) -> str | None:
     git = shutil.which("git")
     if git is None or not (repo / ".git").exists():
         return None
@@ -519,37 +647,28 @@ def head_commit(repo: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
-@dataclass
-class Commit:
-    """One commit from :func:`recent_commits` — full sha kept so callers can
-    cross-reference against ``last_pulled_commit`` to detect new commits."""
+def _head_branch(repo: Path) -> str | None:
+    git = shutil.which("git")
+    if git is None or not (repo / ".git").exists():
+        return None
+    proc = subprocess.run(
+        [git, "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    name = proc.stdout.strip()
+    return name if name and name != "HEAD" else None
 
-    sha: str  # full 40-char sha
-    short: str  # 7-char short sha
-    date: str
-    subject: str
 
-    @property
-    def display(self) -> str:
-        return f"{self.short}  {self.date}  {self.subject}"
-
-
-# Unit Separator — safe field delimiter for commit subjects that may contain
-# anything (including tabs, brackets, etc).
+# Unit Separator — safe field delimiter for commit subjects.
 _COMMIT_SEP = "\x1f"
 
 
-def recent_commits(
-    repo: Path,
-    *,
-    ref: str = "HEAD",
-    limit: int = 20,
-) -> list[Commit]:
-    """Return :class:`Commit` objects for the last ``limit`` commits on ``ref``.
-
-    Used by the "check for updates" panel — runs ``git log -<limit>`` on ``ref``
-    (typically ``origin/<branch>``). Returns an empty list on any error.
-    """
+def _git_log(repo: Path, *, ref: str, limit: int) -> list[Commit]:
     git = shutil.which("git")
     if git is None or not (repo / ".git").exists():
         return []
@@ -582,21 +701,3 @@ def recent_commits(
         sha, short, date, subject = parts
         out.append(Commit(sha=sha, short=short, date=date, subject=subject))
     return out
-
-
-def head_branch(repo: Path) -> str | None:
-    """Return the current branch name (e.g. ``main``), or ``None`` if detached."""
-    git = shutil.which("git")
-    if git is None or not (repo / ".git").exists():
-        return None
-    proc = subprocess.run(
-        [git, "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    name = proc.stdout.strip()
-    return name if name and name != "HEAD" else None

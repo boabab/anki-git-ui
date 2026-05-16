@@ -67,7 +67,7 @@ Each worker is a long-running async function or class invoked by a screen and re
 ### `domain/` — pure logic (no Textual)
 
 - `models.py` — `DeckEntry`, `DeckStatus`, `AnkiProfileChoice` dataclasses
-- `git_ops.py` — `verify_remote`, clone/pull primitives, `GitError`
+- `git_ops.py` — outcome-returning git operations: `clone_deck`, `update_deck`, `list_recent_commits`, `verify_anki_gitify_remote` ([ADR-0002](adr/0002-collapsed-git-interface.md))
 - `deck_ops.py` — deck-level operations (compose git_ops + apkg_paths)
 - `apkg_paths.py` — where the built `.apkg` lives on disk
 - `profile_ops.py` — find and validate the user's Anki profile
@@ -79,7 +79,7 @@ Each worker is a long-running async function or class invoked by a screen and re
 Happy path for the most common flow:
 
 1. User opens `AddDeckScreen`, pastes a GitHub URL.
-2. Screen calls `domain.git_ops.verify_remote()` (lightweight, in-line) — bad URLs surface here.
+2. Screen calls `domain.git_ops.verify_anki_gitify_remote()` (in a worker — does a blobless probe-clone) — bad URLs and non-anki-gitify repos surface here.
 3. User confirms name + folder. Screen persists the new `DeckEntry` via `config.save()` and pushes the deck to `AppState.decks`.
 4. Screen spawns `download_deck_worker` → `git clone` to the chosen folder.
 5. On completion, screen spawns `make_apkg_worker` → `anki-gitify` builds the `.apkg`.

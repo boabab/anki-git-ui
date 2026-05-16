@@ -41,10 +41,12 @@ async def test_add_deck_empty_url_does_not_advance(make_app) -> None:
 async def test_add_deck_step_1_advances_to_step_2(
     make_app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Pressing Next runs verify_gitify_repo in a worker thread; stub it so the
-    # test doesn't hit the network or shell out to git.
+    # Pressing Next runs verify_anki_gitify_remote in a worker thread; stub it
+    # so the test doesn't hit the network or shell out to git.
+    from anki_git_ui.domain.git_ops import RemoteOk
     monkeypatch.setattr(
-        "anki_git_ui.screens.add_deck.verify_gitify_repo", lambda url: None
+        "anki_git_ui.screens.add_deck.verify_anki_gitify_remote",
+        lambda url: RemoteOk(),
     )
     app = make_app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -65,8 +67,10 @@ async def test_add_deck_step_1_advances_to_step_2(
 async def test_add_deck_back_preserves_url(
     make_app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from anki_git_ui.domain.git_ops import RemoteOk
     monkeypatch.setattr(
-        "anki_git_ui.screens.add_deck.verify_gitify_repo", lambda url: None
+        "anki_git_ui.screens.add_deck.verify_anki_gitify_remote",
+        lambda url: RemoteOk(),
     )
     app = make_app()
     async with app.run_test(size=(120, 40)) as pilot:

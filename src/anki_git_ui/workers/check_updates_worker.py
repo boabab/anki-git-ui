@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..domain.git_ops import GitError, fetch, head_branch, recent_commits
+from ..domain.git_ops import CommitsFailed, CommitsListed, list_recent_commits
 from ..domain.models import DeckEntry
 
 
@@ -28,7 +28,7 @@ class CommitLine:
 class CheckUpdatesResult:
     commits: list[CommitLine] = field(default_factory=list)
     branch: str | None = None
-    error: GitError | None = None
+    failure: CommitsFailed | None = None
 
 
 def check_for_updates(
@@ -43,27 +43,20 @@ def check_for_updates(
     commit in the history (i.e. not yet on the user's machine). Commits at or
     below the local commit are flagged ``is_new=False`` so the UI can render
     them dimmed.
-
-    Friendly :class:`GitError` failures are returned via ``result.error`` so
-    Textual treats the worker as successful and the UI can surface a notice
-    instead of a traceback.
     """
-    try:
-        fetch(deck.local_path, on_line=on_log)
-    except GitError as exc:
-        if on_log is not None:
-            on_log(f"Fetch failed: {exc}")
-        return CheckUpdatesResult(error=exc)
-
-    branch = head_branch(deck.local_path) or deck.branch
-    raw = recent_commits(
-        deck.local_path, ref=f"origin/{branch}", limit=limit
+    outcome = list_recent_commits(
+        deck.local_path, fetch_first=True, limit=limit, on_log=on_log
     )
+    if isinstance(outcome, CommitsFailed):
+        if on_log is not None:
+            on_log(f"Fetch failed: {outcome.message}")
+        return CheckUpdatesResult(failure=outcome)
 
+    assert isinstance(outcome, CommitsListed)
     last_pulled = deck.last_pulled_commit
     commits: list[CommitLine] = []
     seen_local = False
-    for c in raw:
+    for c in outcome.commits:
         if seen_local:
             is_new = False
         elif last_pulled and c.sha == last_pulled:
@@ -74,4 +67,4 @@ def check_for_updates(
         commits.append(
             CommitLine(subject=c.subject, date=c.date, short=c.short, is_new=is_new)
         )
-    return CheckUpdatesResult(commits=commits, branch=branch)
+    return CheckUpdatesResult(commits=commits, branch=outcome.branch or deck.branch)

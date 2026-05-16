@@ -1,6 +1,6 @@
 # ADR 0002 — Collapse the git_ops interface
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-16
 
 ## Context

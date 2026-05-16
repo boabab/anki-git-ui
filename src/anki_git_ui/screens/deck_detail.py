@@ -25,7 +25,15 @@ from yaml import YAMLError, safe_load
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
 from ..domain.deck_ops import delete_deck_files
 from ..domain.text_utils import format_path, humanize_age, truncate
-from ..domain.git_ops import CloneProgress, GitError
+from ..domain.git_ops import (
+    CloneFailed,
+    CloneOutcome,
+    CloneProgress,
+    CloneSucceeded,
+    UpdateFailed,
+    UpdateOutcome,
+    UpdateSucceeded,
+)
 from ..domain.models import DeckEntry, DeckStatus
 from ..widgets.log_panel import LogPanel
 from ..widgets.updates_panel import UpdatesPanel
@@ -461,11 +469,13 @@ class DeckDetailScreen(Screen):
             self.query_one(LogPanel).set_progress, pg.percent, phase=pg.phase
         )
 
-    def _do_initial_download(self) -> None:
-        download_deck(self._deck, on_log=self._on_log, on_progress=self._on_progress)
+    def _do_initial_download(self) -> CloneOutcome:
+        return download_deck(
+            self._deck, on_log=self._on_log, on_progress=self._on_progress
+        )
 
-    def _do_update(self) -> None:
-        update_deck(self._deck, on_log=self._on_log)
+    def _do_update(self) -> UpdateOutcome:
+        return update_deck(self._deck, on_log=self._on_log)
 
     def _do_make_apkg(self):
         return make_apkg(
@@ -503,10 +513,11 @@ class DeckDetailScreen(Screen):
     def _on_worker_success(self, op: str | None, result) -> None:
         log = self.query_one(LogPanel)
         if op == "download":
-            if result is not None and result.error is not None:
+            if isinstance(result, CloneFailed):
                 self._chain_build = False
-                self._handle_download_failed(result.error)
+                self._handle_download_failed(result.message)
                 return
+            assert isinstance(result, CloneSucceeded)
             self._deck.status = DeckStatus.UP_TO_DATE
             self.app.config.save()
             log.set_status("Download complete.")
@@ -516,24 +527,25 @@ class DeckDetailScreen(Screen):
                 self._start_chained_build()
                 return
         elif op == "update":
-            if result is not None and result.error is not None:
+            if isinstance(result, UpdateFailed):
                 self._chain_build = False
-                self._handle_update_failed(result.error)
+                self._handle_update_failed(result.message)
                 return
+            assert isinstance(result, UpdateSucceeded)
             self._deck.status = DeckStatus.UP_TO_DATE
             self._deck.updates_available = 0
             self.app.config.save()
-            no_changes = bool(result and result.no_changes)
+            advanced = result.advanced
             log.set_status(
-                "Already up to date." if no_changes else "Updates downloaded."
+                "Updates downloaded." if advanced else "Already up to date."
             )
             self.app.notify(
-                "Already up to date." if no_changes else "Latest version downloaded.",
+                "Latest version downloaded." if advanced else "Already up to date.",
                 title="Done",
             )
             if self._chain_build:
                 self._chain_build = False
-                if no_changes and self._deck.last_built_commit == self._deck.last_pulled_commit:
+                if not advanced and self._deck.last_built_commit == self._deck.last_pulled_commit:
                     # No new changes AND we already built this commit — skip rebuild.
                     apkg = self._deck.last_built_apkg
                     if apkg is not None:
@@ -568,14 +580,6 @@ class DeckDetailScreen(Screen):
 
     def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
         log = self.query_one(LogPanel)
-        if op == "download" and isinstance(err, GitError):
-            self._handle_download_failed(err)
-            return
-
-        if op == "update" and isinstance(err, GitError):
-            self._handle_update_failed(err)
-            return
-
         if op == "check":
             # Background fetch — surface in the panel, not as a modal.
             panel = self.query_one(UpdatesPanel)
@@ -678,7 +682,7 @@ class DeckDetailScreen(Screen):
             )
         )
 
-    def _handle_download_failed(self, err: GitError) -> None:
+    def _handle_download_failed(self, message: str) -> None:
         log = self.query_one(LogPanel)
         log.set_status("Download failed.")
         # Roll back the deck entry — partial state confuses the dashboard.
@@ -692,14 +696,14 @@ class DeckDetailScreen(Screen):
             self.app.pop_screen()
 
         self.app.push_screen(
-            ErrorModal(title="We couldn't download the deck", body=str(err)),
+            ErrorModal(title="We couldn't download the deck", body=message),
             _after,
         )
 
-    def _handle_update_failed(self, err: GitError) -> None:
+    def _handle_update_failed(self, message: str) -> None:
         self.query_one(LogPanel).set_status("Couldn't update the deck.")
         self.app.push_screen(
-            ErrorModal(title="Couldn't update the deck", body=str(err))
+            ErrorModal(title="Couldn't update the deck", body=message)
         )
 
     def _show_locked_modal(self, *, retry, op_label: str) -> None:
@@ -848,8 +852,8 @@ class DeckDetailScreen(Screen):
 
     def _on_check_updates_done(self, result: CheckUpdatesResult) -> None:
         panel = self.query_one(UpdatesPanel)
-        if result.error is not None:
-            panel.set_status(f"Couldn't check for updates: {result.error}")
+        if result.failure is not None:
+            panel.set_status(f"Couldn't check for updates: {result.failure.message}")
             return
         panel.set_commits(result.commits)
         new_count = sum(1 for c in result.commits if c.is_new)
