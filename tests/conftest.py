@@ -8,10 +8,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pytest_textual_snapshot import SVGImageExtension
 
 from anki_git_ui.app import AnkiGitUIApp
 from anki_git_ui.config import Config
 from anki_git_ui.state import AppState, make_mock_state
+
+# pytest-textual-snapshot 1.0.0 sets `_file_extension = "svg"` (underscore-prefixed),
+# but current syrupy reads `file_extension` (no underscore) — so the SVG override is
+# silently ignored and snapshots fall back to syrupy's `.raw` default. Force the
+# right attribute here so snapshots land at *.svg as the test fixtures expect.
+SVGImageExtension.file_extension = "svg"
 
 
 TEST_SAVE_FOLDER = Path("/tmp/anki-git-ui-test/AnkiDecks")
