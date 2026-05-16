@@ -15,8 +15,9 @@ string.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -29,7 +30,6 @@ from textual.worker import Worker
 from ..domain import deck_metadata
 from ..domain.anki_interop import desktop_is_running
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
-from ..domain.deck_ops import delete_deck_files
 from ..domain.git_ops import CloneProgress, CloneSucceeded, UpdateSucceeded
 from ..domain.jobs import Completed, Failed, JobOutcome, NetworkFailed
 from ..domain.models import DeckEntry, DeckStatus
@@ -90,6 +90,31 @@ class _MetaLink(Static):
 
     def on_click(self) -> None:
         self._on_open()
+
+
+_DeleteOutcome = Literal["deleted", "missing", "skipped-unsafe", "error"]
+
+
+def _delete_deck_files(path: Path) -> _DeleteOutcome:
+    """Recursively delete ``path`` if it's safe to do so.
+
+    Refuses to touch ``/``, the user's home directory, or any path that
+    won't resolve. Anything else the user explicitly opted into is fair
+    game — the deletion is opt-in via the Remove modal's checkbox.
+    """
+    try:
+        resolved = path.resolve()
+    except Exception:
+        return "skipped-unsafe"
+    if not resolved.exists():
+        return "missing"
+    if resolved == Path("/") or resolved == Path.home() or resolved == resolved.parent:
+        return "skipped-unsafe"
+    try:
+        shutil.rmtree(resolved)
+    except Exception:
+        return "error"
+    return "deleted"
 
 
 class DeckDetailScreen(Screen):
@@ -871,7 +896,7 @@ class DeckDetailScreen(Screen):
             self.app.config.decks.remove(deck)
         self.app.config.save()
 
-        outcome = delete_deck_files(deck.local_path)
+        outcome = _delete_deck_files(deck.local_path)
         if outcome == "deleted":
             self.app.notify(
                 f'"{deck.nickname}" removed and deleted from disk.', title="Removed"

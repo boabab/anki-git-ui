@@ -1,6 +1,6 @@
 # ADR 0005 — Grow deck_ops into a deck-lifecycle module (or inline it)
 
-**Status:** Proposed — pending direction
+**Status:** Accepted — Path A (inline and delete)
 **Date:** 2026-05-16
 
 ## Context
@@ -48,6 +48,10 @@ The module's job becomes: "manage all on-disk side-effects against a deck and it
 ## Recommendation
 
 Sequence with ADR-0003: do **Path A** now (cheap cleanup), then revisit at ADR-0003 implementation time. If `prepare_deck_folder` and `remove_build_outputs` end up wanting to exist anyway, **Path B** materialises naturally.
+
+## Outcome
+
+**Path A** taken. `domain/deck_ops.py` deleted; the `delete_deck_files` helper (renamed to `_delete_deck_files` and the `DeleteOutcome` alias to `_DeleteOutcome`) now lives as a private module helper in [src/anki_git_ui/screens/deck_detail.py](../../src/anki_git_ui/screens/deck_detail.py), alongside its sole caller `_finalize_remove_deck`. Revisit Path B if/when ADR-0003 lands and `prepare_deck_folder` / `remove_build_outputs` start wanting to exist.
 
 ## Alternatives considered
 

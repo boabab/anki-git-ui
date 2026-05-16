@@ -24,7 +24,7 @@ Source under [src/anki_git_ui/](src/anki_git_ui/):
 - `screens/` — Textual screens, one user flow each (`dashboard`, `add_deck`, `deck_detail`, `settings`, `welcome`, `help`, `modals`)
 - `workers/` — async background tasks (download, make_apkg, update_deck, check_updates, filtered_decks)
 - `widgets/` — reusable Textual widgets (`deck_card`, `log_panel`, `updates_panel`)
-- `domain/` — UI-free logic: `models`, `git_ops`, `deck_ops`, `apkg_paths`, `profile_ops`, `theme`, `text_utils`
+- `domain/` — UI-free logic: `models`, `jobs`, `git_ops`, `anki_interop`, `apkg_paths`, `deck_metadata`, `theme`, `text_utils`
 
 Tests in [tests/](tests/), snapshots in `tests/__snapshots__/`.
 

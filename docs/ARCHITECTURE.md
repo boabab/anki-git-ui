@@ -73,7 +73,6 @@ Since [ADR-0004](adr/0004-anki-interop-facade.md), every worker that touches Ank
 - `jobs.py` — `JobOutcome` union (`Completed[T]`, `AnkiLocked`, `NetworkFailed`, `Failed`) shared by every job ([ADR-0001](adr/0001-deck-job-and-workflow.md))
 - `git_ops.py` — outcome-returning git operations: `clone_deck`, `update_deck`, `list_recent_commits`, `verify_anki_gitify_remote` ([ADR-0002](adr/0002-collapsed-git-interface.md))
 - `anki_interop.py` — the **only** module that imports `anki_gitify.api`. Outcome-returning facade: `apply_filtered`, `rebuild_filtered`, `import_deck`, `resolve_collection`, `detect_profiles`, `desktop_is_running` ([ADR-0004](adr/0004-anki-interop-facade.md))
-- `deck_ops.py` — deck-level operations (compose git_ops + apkg_paths)
 - `deck_metadata.py` — deck-shape knowledge read from the gitified directory (today: `filtered_decks.yml`)
 - `apkg_paths.py` — where the built `.apkg` lives on disk
 - `theme.py` — light/dark/system theme resolution via `darkdetect`
