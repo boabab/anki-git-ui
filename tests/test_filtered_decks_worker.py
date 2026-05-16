@@ -1,4 +1,12 @@
-"""Tests for the filtered_decks_worker."""
+"""Tests for the filtered_decks_worker.
+
+The worker is now a thin translation layer over
+:mod:`anki_git_ui.domain.anki_interop`, so most of the failure-mode coverage
+lives in :mod:`tests.test_anki_interop`. These tests cover the worker's two
+responsibilities: (a) the precondition check for missing
+``filtered_decks.yml`` and (b) end-to-end smoke that the real SDK
+integration still produces a ``Completed`` outcome.
+"""
 
 from __future__ import annotations
 
@@ -6,25 +14,12 @@ from pathlib import Path
 
 import pytest
 
+from anki_git_ui.domain.anki_interop import Completed, Failed
 from anki_git_ui.domain.models import AnkiProfileChoice, DeckEntry, DeckStatus
-from anki_git_ui.workers.filtered_decks_worker import (
-    apply_filtered_decks,
-    is_locked_error,
-)
+from anki_git_ui.workers.filtered_decks_worker import apply_filtered_decks
 
 
-def test_is_locked_error_matches_by_message_not_type() -> None:
-    assert is_locked_error(RuntimeError("Cannot open: file is locked. Close Anki."))
-    assert is_locked_error(RuntimeError("LOCKED"))
-    assert is_locked_error(RuntimeError("Anki already open"))
-    assert is_locked_error(RuntimeError("currently syncing"))
-    assert not is_locked_error(RuntimeError("some other failure"))
-    # Deliberate: anki.errors.DBError is a sibling of RuntimeError, not a
-    # subclass, so the check is intentionally message-based, not type-based.
-    assert is_locked_error(ValueError("locked but wrong type"))
-
-
-def test_apply_filtered_decks_raises_when_no_filtered_yml(tmp_path: Path) -> None:
+def test_apply_filtered_decks_fails_when_no_filtered_yml(tmp_path: Path) -> None:
     deck_dir = tmp_path / "deck"
     deck_dir.mkdir()
     deck = DeckEntry(
@@ -33,8 +28,10 @@ def test_apply_filtered_decks_raises_when_no_filtered_yml(tmp_path: Path) -> Non
         local_path=deck_dir,
         status=DeckStatus.UP_TO_DATE,
     )
-    with pytest.raises(FileNotFoundError, match="filtered-deck"):
-        apply_filtered_decks(deck, AnkiProfileChoice())
+    outcome = apply_filtered_decks(deck, AnkiProfileChoice())
+    assert isinstance(outcome, Failed)
+    assert isinstance(outcome.exc, FileNotFoundError)
+    assert "filtered-deck" in outcome.message
 
 
 def test_apply_filtered_decks_against_synthetic_collection(tmp_path: Path) -> None:
@@ -104,16 +101,18 @@ def test_apply_filtered_decks_against_synthetic_collection(tmp_path: Path) -> No
     target_col_path = target_dir / "collection.anki2"
     Collection(str(target_col_path)).close()
 
-    result = apply_filtered_decks(
+    outcome = apply_filtered_decks(
         deck,
         AnkiProfileChoice(collection_override=target_col_path),
         dry_run=True,
     )
 
     # Dry-run reports what would be created without writing.
-    assert result.dry_run is True
-    assert "Top::Cram::Recent" in result.created
-    assert result.conflicts == []
+    assert isinstance(outcome, Completed)
+    report = outcome.value
+    assert report.dry_run is True
+    assert "Top::Cram::Recent" in report.created
+    assert report.conflicts == []
 
 
 def test_apply_filtered_decks_skips_existing(tmp_path: Path) -> None:
@@ -175,15 +174,17 @@ def test_apply_filtered_decks_skips_existing(tmp_path: Path) -> None:
     Collection(str(target_col_path)).close()
 
     # First apply: creates.
-    r1 = apply_filtered_decks(
+    o1 = apply_filtered_decks(
         deck, AnkiProfileChoice(collection_override=target_col_path)
     )
-    assert "Top::Cram::All" in r1.created
-    assert r1.skipped == []
+    assert isinstance(o1, Completed)
+    assert "Top::Cram::All" in o1.value.created
+    assert o1.value.skipped == []
 
     # Second apply: idempotent (skipped, not re-created).
-    r2 = apply_filtered_decks(
+    o2 = apply_filtered_decks(
         deck, AnkiProfileChoice(collection_override=target_col_path)
     )
-    assert r2.created == []
-    assert "Top::Cram::All" in r2.skipped
+    assert isinstance(o2, Completed)
+    assert o2.value.created == []
+    assert "Top::Cram::All" in o2.value.skipped

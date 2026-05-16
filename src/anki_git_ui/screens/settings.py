@@ -10,7 +10,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
-from ..domain.profile_ops import detect_profiles
+from ..domain.anki_interop import detect_profiles
 from ..domain.text_utils import format_path
 
 

@@ -10,9 +10,9 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
+from ..domain.anki_interop import detect_profiles
 from ..domain.git_ops import detect_git
 from ..domain.models import WelcomeChecks
-from ..domain.profile_ops import detect_profiles
 
 
 def run_checks() -> WelcomeChecks:

@@ -60,14 +60,6 @@ class AnkiProfileChoice:
 
 
 @dataclass
-class MakeAnkiFileResult:
-    apkg_path: Path
-    notes: int
-    media_files: int
-    filtered_decks: int
-
-
-@dataclass
 class WelcomeChecks:
     """Result of the three first-run checks. Each entry is one row in the wizard."""
 

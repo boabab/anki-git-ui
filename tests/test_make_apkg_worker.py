@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from anki_git_ui.domain.anki_interop import Completed
 from anki_git_ui.domain.apkg_paths import apkg_output_path
 from anki_git_ui.domain.models import DeckEntry, DeckStatus
 from anki_git_ui.workers.make_apkg_worker import make_apkg
@@ -81,12 +82,14 @@ def test_make_apkg_against_synthetic_deck(tmp_path: Path) -> None:
 
     save_folder = tmp_path / "AnkiDecks"
     log_lines: list[str] = []
-    result = make_apkg(deck, save_folder, on_log=log_lines.append)
+    outcome = make_apkg(deck, save_folder, on_log=log_lines.append)
 
-    assert result.apkg_path.is_file()
-    assert result.apkg_path.stat().st_size > 0
-    assert result.notes >= 3
-    assert deck.last_built_apkg == result.apkg_path
+    assert isinstance(outcome, Completed)
+    report = outcome.value
+    assert report.apkg_path.is_file()
+    assert report.apkg_path.stat().st_size > 0
+    assert report.notes >= 3
+    assert deck.last_built_apkg == report.apkg_path
     assert deck.last_built_commit == deck.last_pulled_commit
     assert deck.last_built_at is not None
     assert any("Building Anki file" in line for line in log_lines)

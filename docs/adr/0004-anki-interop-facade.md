@@ -1,7 +1,8 @@
 # ADR 0004 — Concentrate Anki interop in a facade module
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-16
+**Implemented:** 2026-05-16
 
 ## Context
 
@@ -27,9 +28,10 @@ Where `AnkiOutcome[T]` is:
 - `Completed(T)`
 - `Locked` — the collection is held by Anki desktop
 - `CollectionMissing(message)` — profile/path resolution failed
+- `CardOverrideRequired` — specific to `import_deck`: the deck has a `cards.csv` and the caller didn't pass `ignore_card_overrides=True`. The user-facing flow is "ask, then retry," not "show an error," so it gets its own variant rather than being rolled into `Failed`.
 - `Failed(exc, message)` — anything else
 
-The string-matching that decides `Locked` lives once inside `anki_interop`'s `except` block. Workers stop catching `Exception` and never see `RuntimeError`-with-magic-string. `is_locked_error` is deleted from `filtered_decks_worker` along with the screen's import of it.
+The string-matching that decides `Locked` lives once inside `anki_interop`'s `_is_locked_error` helper. Workers stop catching `Exception` and never see `RuntimeError`-with-magic-string. `is_locked_error` is deleted from `filtered_decks_worker` along with the screen's import of it.
 
 ## Consequences
 
@@ -43,7 +45,13 @@ The string-matching that decides `Locked` lives once inside `anki_interop`'s `ex
 
 ## Open questions deferred to implementation
 
-- Whether `profile_ops.py` is absorbed into `anki_interop` or stays as a sibling. Lean toward absorbing — `resolve_collection` already overlaps `collection_path_for`.
+- ~~Whether `profile_ops.py` is absorbed into `anki_interop` or stays as a sibling.~~ **Resolved:** absorbed. `detect_profiles` and `resolve_collection` live in `anki_interop`; `domain/profile_ops.py` was deleted.
+
+## Implementation notes
+
+- The `rebuild_filtered` facade takes a pre-resolved `entries: list[str]` rather than re-reading `filtered_decks.yml` itself. The YAML reading lives in `domain/deck_metadata.py` (`list_filtered_deck_names`); both the worker and the deck-detail screen go through it.
+- `CardOverrideRequired` is import-specific. It only appears in `import_deck`'s return type, not on `apply_filtered` / `rebuild_filtered`.
+- The worker layer keeps minimal precondition checks (e.g. `filtered_decks.yml` exists) and surfaces those as `Failed(FileNotFoundError, message)` rather than raising — preserving the "workers never raise" rule.
 
 ## Alternatives considered
 

@@ -54,9 +54,11 @@ Each worker is a long-running async function or class invoked by a screen and re
 |---|---|
 | `download_deck_worker` | `git clone` a deck repo to the local save folder |
 | `update_deck_worker` | `git pull` an existing deck |
-| `make_apkg_worker` | Hand off to `anki-gitify` to build a `.apkg` from a deck repo |
+| `make_apkg_worker` | Build a `.apkg` from a deck repo (delegates to `anki_interop.import_deck`) |
 | `check_updates_worker` | Periodic / on-demand check for remote changes across all decks |
-| `filtered_decks_worker` | Build the dashboard's filtered/sorted deck view in the background for snappy UI |
+| `filtered_decks_worker` | Apply / rebuild filtered decks against the user's collection (delegates to `anki_interop`) |
+
+Since [ADR-0004](adr/0004-anki-interop-facade.md), every worker that touches Anki is a thin translation layer: it constructs the call arguments and returns an `AnkiOutcome` from `domain/anki_interop.py`. Workers never catch `Exception` or string-match error messages.
 
 ### `widgets/` — reusable UI
 
@@ -68,9 +70,10 @@ Each worker is a long-running async function or class invoked by a screen and re
 
 - `models.py` — `DeckEntry`, `DeckStatus`, `AnkiProfileChoice` dataclasses
 - `git_ops.py` — outcome-returning git operations: `clone_deck`, `update_deck`, `list_recent_commits`, `verify_anki_gitify_remote` ([ADR-0002](adr/0002-collapsed-git-interface.md))
+- `anki_interop.py` — the **only** module that imports `anki_gitify.api`. Outcome-returning facade: `apply_filtered`, `rebuild_filtered`, `import_deck`, `resolve_collection`, `detect_profiles`, `desktop_is_running` ([ADR-0004](adr/0004-anki-interop-facade.md))
 - `deck_ops.py` — deck-level operations (compose git_ops + apkg_paths)
+- `deck_metadata.py` — deck-shape knowledge read from the gitified directory (today: `filtered_decks.yml`)
 - `apkg_paths.py` — where the built `.apkg` lives on disk
-- `profile_ops.py` — find and validate the user's Anki profile
 - `theme.py` — light/dark/system theme resolution via `darkdetect`
 - `text_utils.py` — string helpers (nickname slugs, etc.)
 

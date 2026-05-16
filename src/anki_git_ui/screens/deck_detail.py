@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from anki_gitify.api import CardOverrideError
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -20,8 +19,18 @@ from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
-from yaml import YAMLError, safe_load
 
+from ..domain import deck_metadata
+from ..domain.anki_interop import (
+    ApplyReport,
+    CardOverrideRequired,
+    CollectionMissing,
+    Completed,
+    Failed,
+    Locked,
+    RebuildReport,
+    desktop_is_running,
+)
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
 from ..domain.deck_ops import delete_deck_files
 from ..domain.text_utils import format_path, humanize_age, truncate
@@ -41,11 +50,7 @@ from ..workers.check_updates_worker import CheckUpdatesResult, check_for_updates
 from ..workers.download_deck_worker import download_deck
 from ..workers.make_apkg_worker import make_apkg
 from ..workers.filtered_decks_worker import (
-    FilteredDecksResult,
-    RebuildFilteredDecksResult,
     apply_filtered_decks,
-    is_anki_desktop_running,
-    is_locked_error,
     rebuild_filtered_decks,
 )
 from ..workers.update_deck_worker import update_deck
@@ -235,17 +240,7 @@ class DeckDetailScreen(Screen):
         )
 
     def _filtered_decks_count(self) -> int:
-        path = self._deck.local_path / "filtered_decks.yml"
-        if not path.is_file():
-            return 0
-        try:
-            data = safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, YAMLError):
-            return 0
-        if not isinstance(data, dict):
-            return 0
-        entries = data.get("filtered_decks") or []
-        return len(entries) if isinstance(entries, list) else 0
+        return len(deck_metadata.list_filtered_deck_names(self._deck.local_path))
 
     def _filtered_decks_button_label(self) -> str:
         count = self._filtered_decks_count()
@@ -391,7 +386,7 @@ class DeckDetailScreen(Screen):
         return check_for_updates(self._deck, on_log=self._on_log)
 
     def _start_filtered_decks(self) -> None:
-        if is_anki_desktop_running():
+        if desktop_is_running():
             self._show_locked_modal(
                 retry=self._start_filtered_decks, op_label="Filtered-decks setup"
             )
@@ -417,7 +412,7 @@ class DeckDetailScreen(Screen):
         )
 
     def _start_rebuild_filtered(self) -> None:
-        if is_anki_desktop_running():
+        if desktop_is_running():
             self._show_locked_modal(
                 retry=self._start_rebuild_filtered, op_label="Rebuild"
             )
@@ -554,6 +549,14 @@ class DeckDetailScreen(Screen):
                     self._start_chained_build()
                     return
         elif op == "build":
+            if isinstance(result, CardOverrideRequired):
+                log.set_status("Build paused — needs your decision.")
+                self._handle_card_overrides()
+                return
+            if isinstance(result, Failed):
+                self._handle_build_failed(result)
+                return
+            assert isinstance(result, Completed)
             self.app.config.save()
             log.set_status("Anki file is ready.")
             apkg = self._deck.last_built_apkg
@@ -566,16 +569,10 @@ class DeckDetailScreen(Screen):
             self._start_check_updates()
         elif op == "check" and isinstance(result, CheckUpdatesResult):
             self._on_check_updates_done(result)
-        elif op == "filtered" and isinstance(result, FilteredDecksResult):
-            if result.locked:
-                self._show_locked_modal(retry=self._start_filtered_decks, op_label="Filtered-decks setup")
-            else:
-                self._on_filtered_decks_done(result)
-        elif op == "rebuild" and isinstance(result, RebuildFilteredDecksResult):
-            if result.locked:
-                self._show_locked_modal(retry=self._start_rebuild_filtered, op_label="Rebuild")
-            else:
-                self._on_rebuild_filtered_done(result)
+        elif op == "filtered":
+            self._handle_filtered_outcome(result)
+        elif op == "rebuild":
+            self._handle_rebuild_outcome(result)
         self._refresh_status_line()
 
     def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
@@ -586,92 +583,8 @@ class DeckDetailScreen(Screen):
             panel.set_status(f"Couldn't check for updates: {err}" if err else "Couldn't check for updates.")
             return
 
-        if op == "build" and isinstance(err, CardOverrideError):
-            log.set_status("Build paused — needs your decision.")
-            self._handle_card_overrides()
-            return
-
-        if op == "filtered" and is_locked_error(err):
-            log.set_status("Filtered-decks setup paused — Anki is open.")
-
-            def _retry(retry: bool | None) -> None:
-                if retry:
-                    self._start_filtered_decks()
-
-            self.app.push_screen(AnkiLockedModal(), _retry)
-            return
-
-        if op == "filtered" and isinstance(err, FileNotFoundError):
-            log.set_status("Couldn't set up filtered decks.")
-            self.app.push_screen(
-                ErrorModal(
-                    title="We couldn't find your Anki",
-                    body=str(err)
-                    or "We couldn't locate your Anki collection. Open Settings to "
-                    "pick the right Anki profile or collection file.",
-                )
-            )
-            return
-
-        if op == "filtered" and isinstance(err, (ValueError, RuntimeError)):
-            log.set_status("Couldn't set up filtered decks.")
-            self.app.push_screen(
-                ErrorModal(
-                    title="Couldn't set up filtered decks",
-                    body="Something went wrong while applying the filtered-deck settings. "
-                    "Please check your Anki profile in Settings and try again.",
-                    details=f"{type(err).__name__}: {err}" if err else None,
-                )
-            )
-            return
-
-        if op == "rebuild" and is_locked_error(err):
-            log.set_status("Rebuild paused — Anki is open.")
-
-            def _retry_rebuild(retry: bool | None) -> None:
-                if retry:
-                    self._start_rebuild_filtered()
-
-            self.app.push_screen(AnkiLockedModal(), _retry_rebuild)
-            return
-
-        if op == "rebuild" and isinstance(err, FileNotFoundError):
-            log.set_status("Couldn't rebuild filtered decks.")
-            self.app.push_screen(
-                ErrorModal(
-                    title="We couldn't find your Anki",
-                    body=str(err)
-                    or "We couldn't locate your Anki collection. Open Settings to "
-                    "pick the right Anki profile or collection file.",
-                )
-            )
-            return
-
-        if op == "rebuild" and isinstance(err, (ValueError, RuntimeError)):
-            log.set_status("Couldn't rebuild filtered decks.")
-            self.app.push_screen(
-                ErrorModal(
-                    title="Couldn't rebuild filtered decks",
-                    body="Something went wrong while rebuilding. Please check your "
-                    "Anki profile in Settings and try again.",
-                    details=f"{type(err).__name__}: {err}" if err else None,
-                )
-            )
-            return
-
-        if op == "build" and isinstance(err, (ValueError, FileNotFoundError)):
-            log.set_status("Couldn't make the Anki file.")
-            self.app.push_screen(
-                ErrorModal(
-                    title="The deck files don't look right",
-                    body="We couldn't prepare an Anki file from this deck. The files "
-                    "might be incomplete or in a format we don't understand.",
-                    details=str(err),
-                )
-            )
-            return
-
-        # Generic fallback
+        # Filtered/rebuild/build workers never raise — they return Anki
+        # outcomes — so any error here is genuinely unexpected.
         log.set_status("Something went wrong.")
         self.app.push_screen(
             ErrorModal(
@@ -679,6 +592,84 @@ class DeckDetailScreen(Screen):
                 body="We hit an unexpected error. The technical details below may "
                 "help you figure out what happened.",
                 details=f"{type(err).__name__}: {err}" if err else None,
+            )
+        )
+
+    # ---------- outcome handlers (ADR-0004) ---------- #
+
+    def _handle_filtered_outcome(self, outcome) -> None:
+        log = self.query_one(LogPanel)
+        if isinstance(outcome, Locked):
+            self._show_locked_modal(
+                retry=self._start_filtered_decks, op_label="Filtered-decks setup"
+            )
+            return
+        if isinstance(outcome, CollectionMissing):
+            log.set_status("Couldn't set up filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="We couldn't find your Anki",
+                    body=outcome.message
+                    or "We couldn't locate your Anki collection. Open Settings to "
+                    "pick the right Anki profile or collection file.",
+                )
+            )
+            return
+        if isinstance(outcome, Failed):
+            log.set_status("Couldn't set up filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="Couldn't set up filtered decks",
+                    body="Something went wrong while applying the filtered-deck settings. "
+                    "Please check your Anki profile in Settings and try again.",
+                    details=f"{type(outcome.exc).__name__}: {outcome.message}",
+                )
+            )
+            return
+        assert isinstance(outcome, Completed)
+        self._on_filtered_decks_done(outcome.value)
+
+    def _handle_rebuild_outcome(self, outcome) -> None:
+        log = self.query_one(LogPanel)
+        if isinstance(outcome, Locked):
+            self._show_locked_modal(
+                retry=self._start_rebuild_filtered, op_label="Rebuild"
+            )
+            return
+        if isinstance(outcome, CollectionMissing):
+            log.set_status("Couldn't rebuild filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="We couldn't find your Anki",
+                    body=outcome.message
+                    or "We couldn't locate your Anki collection. Open Settings to "
+                    "pick the right Anki profile or collection file.",
+                )
+            )
+            return
+        if isinstance(outcome, Failed):
+            log.set_status("Couldn't rebuild filtered decks.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="Couldn't rebuild filtered decks",
+                    body="Something went wrong while rebuilding. Please check your "
+                    "Anki profile in Settings and try again.",
+                    details=f"{type(outcome.exc).__name__}: {outcome.message}",
+                )
+            )
+            return
+        assert isinstance(outcome, Completed)
+        self._on_rebuild_filtered_done(outcome.value)
+
+    def _handle_build_failed(self, outcome: Failed) -> None:
+        log = self.query_one(LogPanel)
+        log.set_status("Couldn't make the Anki file.")
+        self.app.push_screen(
+            ErrorModal(
+                title="The deck files don't look right",
+                body="We couldn't prepare an Anki file from this deck. The files "
+                "might be incomplete or in a format we don't understand.",
+                details=outcome.message,
             )
         )
 
@@ -754,7 +745,7 @@ class DeckDetailScreen(Screen):
             _on_choice,
         )
 
-    def _on_filtered_decks_done(self, result: FilteredDecksResult) -> None:
+    def _on_filtered_decks_done(self, result: ApplyReport) -> None:
         log = self.query_one(LogPanel)
         if result.created:
             for name in result.created:
@@ -796,7 +787,7 @@ class DeckDetailScreen(Screen):
             )
         log.set_status("Filtered decks ready.")
 
-    def _on_rebuild_filtered_done(self, result: RebuildFilteredDecksResult) -> None:
+    def _on_rebuild_filtered_done(self, result: RebuildReport) -> None:
         log = self.query_one(LogPanel)
         for name in result.rebuilt:
             log.add_line(f"  ✓ {name} (rebuilt)")
