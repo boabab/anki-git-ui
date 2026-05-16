@@ -1,6 +1,12 @@
 # Architecture
 
-This document is a navigation aid, not a reference. The code is the source of truth; this file describes the **shape** so a fresh reader (or agent) knows where to start.
+This document is a **navigation aid**: where the code lives. Sibling docs do related but distinct jobs:
+
+- [**CONTEXT.md**](../CONTEXT.md) — the **glossary**: what the words in the codebase mean (Deck, Subscription, Job, Workflow, Anki interop…).
+- [**docs/adr/**](adr/) — **architectural decision records**: why things are shaped a certain way, what was rejected, and the open questions.
+- [**CLAUDE.md**](../CLAUDE.md) — project conventions and gotchas for contributors.
+
+The code is the source of truth; this file describes the **shape** so a fresh reader (or agent) knows where to start.
 
 ## Three layers
 
