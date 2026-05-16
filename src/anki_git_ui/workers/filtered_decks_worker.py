@@ -13,12 +13,15 @@ from collections.abc import Callable
 from ..domain import anki_interop, deck_metadata
 from ..domain.anki_interop import (
     ApplyReport,
-    Completed,
-    Failed,
+    CollectionMissing,
+    Completed as InteropCompleted,
+    Failed as InteropFailed,
     Locked,
     RebuildReport,
 )
+from ..domain.jobs import AnkiLocked, Completed, Failed, JobOutcome
 from ..domain.models import AnkiProfileChoice, DeckEntry
+from ..jobs import Job
 
 
 def apply_filtered_decks(
@@ -42,7 +45,7 @@ def apply_filtered_decks(
             f"This deck doesn't include any filtered-deck definitions "
             f"({spec_path} is missing)."
         )
-        return Failed(exc=FileNotFoundError(message), message=message)
+        return InteropFailed(exc=FileNotFoundError(message), message=message)
 
     return anki_interop.apply_filtered(
         deck.local_path,
@@ -69,7 +72,7 @@ def rebuild_filtered_decks(
             f"This deck doesn't include any filtered-deck definitions "
             f"({spec_path} is missing)."
         )
-        return Failed(exc=FileNotFoundError(message), message=message)
+        return InteropFailed(exc=FileNotFoundError(message), message=message)
 
     entries = deck_metadata.list_filtered_deck_names(deck.local_path)
     return anki_interop.rebuild_filtered(
@@ -80,12 +83,65 @@ def rebuild_filtered_decks(
     )
 
 
+def apply_filtered_decks_job(
+    deck: DeckEntry,
+    anki: AnkiProfileChoice,
+    *,
+    dry_run: bool = False,
+    on_log: Callable[[str], None] | None = None,
+) -> Job[ApplyReport]:
+    """Build a :class:`Job` that applies filtered decks and translates the
+    result to a :class:`JobOutcome`."""
+
+    def _work() -> JobOutcome[ApplyReport]:
+        return _to_job_outcome(
+            apply_filtered_decks(deck, anki, dry_run=dry_run, on_log=on_log)
+        )
+
+    return Job(name="filtered", work=_work)
+
+
+def rebuild_filtered_decks_job(
+    deck: DeckEntry,
+    anki: AnkiProfileChoice,
+    *,
+    on_log: Callable[[str], None] | None = None,
+) -> Job[RebuildReport]:
+    """Build a :class:`Job` that rebuilds filtered decks and translates the
+    result to a :class:`JobOutcome`."""
+
+    def _work() -> JobOutcome[RebuildReport]:
+        return _to_job_outcome(rebuild_filtered_decks(deck, anki, on_log=on_log))
+
+    return Job(name="rebuild", work=_work)
+
+
+def _to_job_outcome(outcome) -> JobOutcome:
+    """Translate an :mod:`anki_interop` outcome into a :class:`JobOutcome`.
+
+    :class:`Locked` → :class:`AnkiLocked`; :class:`CollectionMissing` →
+    :class:`Failed` with ``kind="collection_missing"`` so the screen can
+    branch to a Settings-pointing error modal.
+    """
+    if isinstance(outcome, InteropCompleted):
+        return Completed(outcome.value)
+    if isinstance(outcome, Locked):
+        return AnkiLocked()
+    if isinstance(outcome, CollectionMissing):
+        return Failed(
+            exc=RuntimeError(outcome.message),
+            message=outcome.message,
+            kind="collection_missing",
+        )
+    assert isinstance(outcome, InteropFailed)
+    return Failed(exc=outcome.exc, message=outcome.message)
+
+
 __all__ = [
     "ApplyReport",
-    "Completed",
-    "Failed",
-    "Locked",
     "RebuildReport",
     "apply_filtered_decks",
+    "apply_filtered_decks_job",
     "rebuild_filtered_decks",
+    "rebuild_filtered_decks_job",
 ]

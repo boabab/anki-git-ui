@@ -5,6 +5,12 @@ streaming activity log. Downloads automatically chain into an Anki-file
 build; the build result (clickable apkg path + "Open in Anki" button) is
 surfaced inside the LogPanel. A top-of-screen UpdatesPanel fetches the
 remote and lists recent commits so the user can see what's available.
+
+All async operations go through the Job framework
+([ADR-0001](../../docs/adr/0001-deck-job-and-workflow.md)): each call site
+registers a typed ``on_done(outcome)`` handler, the framework dispatches
+worker results, and there is no per-screen state machine over an op-name
+string.
 """
 
 from __future__ import annotations
@@ -18,42 +24,29 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Static
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 
 from ..domain import deck_metadata
-from ..domain.anki_interop import (
-    ApplyReport,
-    CardOverrideRequired,
-    CollectionMissing,
-    Completed,
-    Failed,
-    Locked,
-    RebuildReport,
-    desktop_is_running,
-)
+from ..domain.anki_interop import desktop_is_running
 from ..domain.apkg_paths import open_with_default_app, reveal_in_file_manager
 from ..domain.deck_ops import delete_deck_files
-from ..domain.text_utils import format_path, humanize_age, truncate
-from ..domain.git_ops import (
-    CloneFailed,
-    CloneOutcome,
-    CloneProgress,
-    CloneSucceeded,
-    UpdateFailed,
-    UpdateOutcome,
-    UpdateSucceeded,
-)
+from ..domain.git_ops import CloneProgress, CloneSucceeded, UpdateSucceeded
+from ..domain.jobs import Completed, Failed, JobOutcome, NetworkFailed
 from ..domain.models import DeckEntry, DeckStatus
+from ..domain.text_utils import format_path, humanize_age, truncate
+from ..jobs import dispatch_job_event, run_job, run_with_anki_locked_retry
 from ..widgets.log_panel import LogPanel
 from ..widgets.updates_panel import UpdatesPanel
-from ..workers.check_updates_worker import CheckUpdatesResult, check_for_updates
-from ..workers.download_deck_worker import download_deck
-from ..workers.make_apkg_worker import make_apkg
+from ..workers.check_updates_worker import CheckUpdatesResult, check_for_updates_job
+from ..workers.download_deck_worker import download_deck_job
 from ..workers.filtered_decks_worker import (
-    apply_filtered_decks,
-    rebuild_filtered_decks,
+    ApplyReport,
+    RebuildReport,
+    apply_filtered_decks_job,
+    rebuild_filtered_decks_job,
 )
-from ..workers.update_deck_worker import update_deck
+from ..workers.make_apkg_worker import ImportReport, make_apkg_job
+from ..workers.update_deck_worker import update_deck_job
 from .modals import AnkiLockedModal, ConfirmModal, ErrorModal, RemoveDeckModal, RemoveDeckResult
 
 
@@ -108,11 +101,9 @@ class DeckDetailScreen(Screen):
         super().__init__()
         self._deck = deck
         self._auto_download = auto_download
+        # Single is-running flag — the only state machine left on this screen
+        # after ADR-0001. Per-op routing is replaced by typed on_done callbacks.
         self._busy = False
-        # "download" | "update" | "build" | "filtered" | "rebuild" | "check"
-        self._current_op: str | None = None
-        # Track whether we should chain a build after the next download/update.
-        self._chain_build: bool = False
         # Path of the most recently built .apkg — used by the "Open in Anki"
         # button and the clickable link inside the download card.
         self._apkg_path: Path | None = None
@@ -333,126 +324,12 @@ class DeckDetailScreen(Screen):
                 f"Couldn't open {self._deck.local_path}.", severity="warning"
             )
 
-    # ---------- worker dispatch ---------- #
+    # ---------- worker plumbing ---------- #
 
-    def _start_download(self, *, initial: bool) -> None:
-        self._busy = True
-        self._current_op = "download" if initial else "update"
-        self._chain_build = True
-        log = self.query_one(LogPanel)
-        log.clear()
-        log.set_status(
-            "Downloading…" if initial else "Downloading latest version…"
-        )
-        log.set_progress(0, phase="Connecting")
-        self._hide_build_result()
-        self._set_action_buttons_enabled(False)
-        self.app.notify(
-            "Downloading the deck…" if initial else "Downloading the latest version…",
-            title="Started",
-        )
-
-        if initial:
-            self.run_worker(
-                self._do_initial_download,
-                thread=True,
-                exclusive=True,
-                group="deck-actions",
-            )
-        else:
-            self.run_worker(
-                self._do_update,
-                thread=True,
-                exclusive=True,
-                group="deck-actions",
-            )
-
-    def _start_check_updates(self) -> None:
-        # Background, informational. Don't touch _busy / action-button enabled
-        # state — the user should be able to keep clicking buttons while the
-        # fetch happens, and disabling them visibly flashes the buttons grey
-        # for a moment after the screen mounts.
-        panel = self.query_one(UpdatesPanel)
-        panel.set_status("Checking for updates…")
-        self.run_worker(
-            self._do_check_updates,
-            thread=True,
-            exclusive=True,
-            group="deck-actions",
-            name="check-updates",
-        )
-
-    def _do_check_updates(self) -> CheckUpdatesResult:
-        return check_for_updates(self._deck, on_log=self._on_log)
-
-    def _start_filtered_decks(self) -> None:
-        if desktop_is_running():
-            self._show_locked_modal(
-                retry=self._start_filtered_decks, op_label="Filtered-decks setup"
-            )
-            return
-        self._busy = True
-        self._current_op = "filtered"
-        log = self.query_one(LogPanel)
-        log.clear()
-        log.set_status("Setting up filtered decks…")
-        self._set_action_buttons_enabled(False)
-        self.run_worker(
-            self._do_filtered_decks,
-            thread=True,
-            exclusive=True,
-            group="deck-actions",
-        )
-
-    def _do_filtered_decks(self):
-        return apply_filtered_decks(
-            self._deck,
-            self.app.config.anki,
-            on_log=self._on_log,
-        )
-
-    def _start_rebuild_filtered(self) -> None:
-        if desktop_is_running():
-            self._show_locked_modal(
-                retry=self._start_rebuild_filtered, op_label="Rebuild"
-            )
-            return
-        self._busy = True
-        self._current_op = "rebuild"
-        log = self.query_one(LogPanel)
-        log.clear()
-        log.set_status("Rebuilding filtered decks…")
-        self._set_action_buttons_enabled(False)
-        self.run_worker(
-            self._do_rebuild_filtered,
-            thread=True,
-            exclusive=True,
-            group="deck-actions",
-        )
-
-    def _do_rebuild_filtered(self):
-        return rebuild_filtered_decks(
-            self._deck,
-            self.app.config.anki,
-            on_log=self._on_log,
-        )
-
-    def _start_chained_build(self) -> None:
-        """Auto-build the .apkg after a successful download/update."""
-        self._busy = True
-        self._current_op = "build"
-        log = self.query_one(LogPanel)
-        log.set_status("Preparing Anki file…")
-        self._set_action_buttons_enabled(False)
-        self.app.notify("Preparing the Anki file…", title="Building")
-        self.run_worker(
-            self._do_make_apkg,
-            thread=True,
-            exclusive=True,
-            group="deck-actions",
-        )
-
-    # ---------- thread workers ---------- #
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        # The framework dispatches by worker name to the on_done callback
+        # registered when the job started. Anything not registered is ignored.
+        dispatch_job_event(self, event)
 
     def _on_log(self, line: str) -> None:
         self.app.call_from_thread(self.query_one(LogPanel).add_line, line)
@@ -464,147 +341,149 @@ class DeckDetailScreen(Screen):
             self.query_one(LogPanel).set_progress, pg.percent, phase=pg.phase
         )
 
-    def _do_initial_download(self) -> CloneOutcome:
-        return download_deck(
-            self._deck, on_log=self._on_log, on_progress=self._on_progress
+    # ---------- Download / Update workflow (clone-or-pull → build) ---------- #
+
+    def _start_download(self, *, initial: bool) -> None:
+        self._busy_start(
+            log_status="Downloading…" if initial else "Downloading latest version…",
+            progress_phase="Connecting",
+        )
+        self._hide_build_result()
+        self.app.notify(
+            "Downloading the deck…" if initial else "Downloading the latest version…",
+            title="Started",
         )
 
-    def _do_update(self) -> UpdateOutcome:
-        return update_deck(self._deck, on_log=self._on_log)
-
-    def _do_make_apkg(self):
-        return make_apkg(
-            self._deck,
-            self.app.config.default_save_folder,
-            on_log=self._on_log,
-        )
-
-    # ---------- worker completion ---------- #
-
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR):
-            return
-        # Background check runs without touching _busy / button state — route
-        # it past the standard "deck action completed" bookkeeping.
-        if event.worker.name == "check-updates":
-            if event.state == WorkerState.SUCCESS:
-                self._on_worker_success("check", event.worker.result)
-            else:
-                self._on_worker_error("check", event.worker.error)
-            return
-
-        op = self._current_op
-        self._busy = False
-        self._current_op = None
-        self._set_action_buttons_enabled(True)
-        log = self.query_one(LogPanel)
-        log.set_progress(None)
-
-        if event.state == WorkerState.SUCCESS:
-            self._on_worker_success(op, event.worker.result)
+        if initial:
+            job = download_deck_job(
+                self._deck, on_log=self._on_log, on_progress=self._on_progress
+            )
+            run_job(self, job, on_done=self._on_initial_download_done)
         else:
-            self._on_worker_error(op, event.worker.error)
+            job = update_deck_job(self._deck, on_log=self._on_log)
+            run_job(self, job, on_done=self._on_update_done)
 
-    def _on_worker_success(self, op: str | None, result) -> None:
+    def _on_initial_download_done(
+        self, outcome: JobOutcome[CloneSucceeded]
+    ) -> None:
+        if isinstance(outcome, (NetworkFailed, Failed)):
+            self._busy_end()
+            self._handle_download_failed(_message_of(outcome))
+            return
+        assert isinstance(outcome, Completed)
+        self._deck.status = DeckStatus.UP_TO_DATE
+        self.app.config.save()
+        self.query_one(LogPanel).set_status("Download complete.")
+        self.app.notify("Deck downloaded.", title="Done")
+        self._chain_build()
+
+    def _on_update_done(self, outcome: JobOutcome[UpdateSucceeded]) -> None:
+        if isinstance(outcome, (NetworkFailed, Failed)):
+            self._busy_end()
+            self._handle_update_failed(_message_of(outcome))
+            return
+        assert isinstance(outcome, Completed)
+        succeeded = outcome.value
+        self._deck.status = DeckStatus.UP_TO_DATE
+        self._deck.updates_available = 0
+        self.app.config.save()
+        advanced = succeeded.advanced
         log = self.query_one(LogPanel)
-        if op == "download":
-            if isinstance(result, CloneFailed):
-                self._chain_build = False
-                self._handle_download_failed(result.message)
-                return
-            assert isinstance(result, CloneSucceeded)
-            self._deck.status = DeckStatus.UP_TO_DATE
-            self.app.config.save()
-            log.set_status("Download complete.")
-            self.app.notify("Deck downloaded.", title="Done")
-            if self._chain_build:
-                self._chain_build = False
-                self._start_chained_build()
-                return
-        elif op == "update":
-            if isinstance(result, UpdateFailed):
-                self._chain_build = False
-                self._handle_update_failed(result.message)
-                return
-            assert isinstance(result, UpdateSucceeded)
-            self._deck.status = DeckStatus.UP_TO_DATE
-            self._deck.updates_available = 0
-            self.app.config.save()
-            advanced = result.advanced
-            log.set_status(
-                "Updates downloaded." if advanced else "Already up to date."
-            )
-            self.app.notify(
-                "Latest version downloaded." if advanced else "Already up to date.",
-                title="Done",
-            )
-            if self._chain_build:
-                self._chain_build = False
-                if not advanced and self._deck.last_built_commit == self._deck.last_pulled_commit:
-                    # No new changes AND we already built this commit — skip rebuild.
-                    apkg = self._deck.last_built_apkg
-                    if apkg is not None:
-                        self._show_build_result(apkg)
-                else:
-                    self._start_chained_build()
-                    return
-        elif op == "build":
-            if isinstance(result, CardOverrideRequired):
-                log.set_status("Build paused — needs your decision.")
-                self._handle_card_overrides()
-                return
-            if isinstance(result, Failed):
-                self._handle_build_failed(result)
-                return
-            assert isinstance(result, Completed)
-            self.app.config.save()
-            log.set_status("Anki file is ready.")
+        log.set_status(
+            "Updates downloaded." if advanced else "Already up to date."
+        )
+        self.app.notify(
+            "Latest version downloaded." if advanced else "Already up to date.",
+            title="Done",
+        )
+        if not advanced and self._deck.last_built_commit == self._deck.last_pulled_commit:
+            # No new changes AND we already built this commit — skip rebuild.
+            self._busy_end()
             apkg = self._deck.last_built_apkg
             if apkg is not None:
                 self._show_build_result(apkg)
-                self.app.notify(str(apkg), title="Anki file ready")
-            # Populate the Git history panel — for a fresh deck the panel
-            # would still be on its initial "Checking…" placeholder otherwise,
-            # since on_mount started a download instead of a check.
-            self._start_check_updates()
-        elif op == "check" and isinstance(result, CheckUpdatesResult):
-            self._on_check_updates_done(result)
-        elif op == "filtered":
-            self._handle_filtered_outcome(result)
-        elif op == "rebuild":
-            self._handle_rebuild_outcome(result)
+            self._refresh_status_line()
+            return
+        self._chain_build()
+
+    def _chain_build(self, *, ignore_card_overrides: bool = False) -> None:
+        """Run a build job; busy state carries over from the previous job."""
+        log = self.query_one(LogPanel)
+        log.set_status(
+            "Preparing Anki file (with cards.csv ignored)…"
+            if ignore_card_overrides
+            else "Preparing Anki file…"
+        )
+        if not ignore_card_overrides:
+            self.app.notify("Preparing the Anki file…", title="Building")
+        job = make_apkg_job(
+            self._deck,
+            self.app.config.default_save_folder,
+            on_log=self._on_log,
+            ignore_card_overrides=ignore_card_overrides,
+        )
+        run_job(self, job, on_done=self._on_build_done)
+
+    def _on_build_done(self, outcome: JobOutcome[ImportReport]) -> None:
+        log = self.query_one(LogPanel)
+        if isinstance(outcome, Failed) and outcome.kind == "card_override":
+            # Don't end _busy yet — we may re-launch the build with the flag set.
+            log.set_status("Build paused — needs your decision.")
+            self._handle_card_overrides()
+            return
+        self._busy_end()
+        if isinstance(outcome, Failed):
+            log.set_status("Couldn't make the Anki file.")
+            self.app.push_screen(
+                ErrorModal(
+                    title="The deck files don't look right",
+                    body="We couldn't prepare an Anki file from this deck. The files "
+                    "might be incomplete or in a format we don't understand.",
+                    details=outcome.message,
+                )
+            )
+            self._refresh_status_line()
+            return
+        assert isinstance(outcome, Completed)
+        self.app.config.save()
+        log.set_status("Anki file is ready.")
+        apkg = self._deck.last_built_apkg
+        if apkg is not None:
+            self._show_build_result(apkg)
+            self.app.notify(str(apkg), title="Anki file ready")
+        # Populate the Git history panel — for a fresh deck the panel
+        # would still be on its initial placeholder otherwise, since
+        # on_mount started a download instead of a check.
+        self._start_check_updates()
         self._refresh_status_line()
 
-    def _on_worker_error(self, op: str | None, err: BaseException | None) -> None:
-        log = self.query_one(LogPanel)
-        if op == "check":
-            # Background fetch — surface in the panel, not as a modal.
-            panel = self.query_one(UpdatesPanel)
-            panel.set_status(f"Couldn't check for updates: {err}" if err else "Couldn't check for updates.")
-            return
+    # ---------- Filtered decks workflow (with Anki-lock retry) ---------- #
 
-        # Filtered/rebuild/build workers never raise — they return Anki
-        # outcomes — so any error here is genuinely unexpected.
-        log.set_status("Something went wrong.")
-        self.app.push_screen(
-            ErrorModal(
-                title="Something went wrong",
-                body="We hit an unexpected error. The technical details below may "
-                "help you figure out what happened.",
-                details=f"{type(err).__name__}: {err}" if err else None,
-            )
-        )
-
-    # ---------- outcome handlers (ADR-0004) ---------- #
-
-    def _handle_filtered_outcome(self, outcome) -> None:
-        log = self.query_one(LogPanel)
-        if isinstance(outcome, Locked):
+    def _start_filtered_decks(self) -> None:
+        if desktop_is_running():
             self._show_locked_modal(
                 retry=self._start_filtered_decks, op_label="Filtered-decks setup"
             )
             return
-        if isinstance(outcome, CollectionMissing):
+        self._busy_start(log_status="Setting up filtered decks…")
+        job = apply_filtered_decks_job(
+            self._deck, self.app.config.anki, on_log=self._on_log
+        )
+        run_with_anki_locked_retry(
+            self,
+            job,
+            on_done=self._on_filtered_decks_outcome,
+            on_locked=lambda retry: self._show_locked_modal(
+                retry=retry, op_label="Filtered-decks setup"
+            ),
+        )
+
+    def _on_filtered_decks_outcome(
+        self, outcome: JobOutcome[ApplyReport]
+    ) -> None:
+        self._busy_end()
+        log = self.query_one(LogPanel)
+        if isinstance(outcome, Failed) and outcome.kind == "collection_missing":
             log.set_status("Couldn't set up filtered decks.")
             self.app.push_screen(
                 ErrorModal(
@@ -628,15 +507,31 @@ class DeckDetailScreen(Screen):
             return
         assert isinstance(outcome, Completed)
         self._on_filtered_decks_done(outcome.value)
+        self._refresh_status_line()
 
-    def _handle_rebuild_outcome(self, outcome) -> None:
-        log = self.query_one(LogPanel)
-        if isinstance(outcome, Locked):
+    def _start_rebuild_filtered(self) -> None:
+        if desktop_is_running():
             self._show_locked_modal(
                 retry=self._start_rebuild_filtered, op_label="Rebuild"
             )
             return
-        if isinstance(outcome, CollectionMissing):
+        self._busy_start(log_status="Rebuilding filtered decks…")
+        job = rebuild_filtered_decks_job(
+            self._deck, self.app.config.anki, on_log=self._on_log
+        )
+        run_with_anki_locked_retry(
+            self,
+            job,
+            on_done=self._on_rebuild_outcome,
+            on_locked=lambda retry: self._show_locked_modal(
+                retry=retry, op_label="Rebuild"
+            ),
+        )
+
+    def _on_rebuild_outcome(self, outcome: JobOutcome[RebuildReport]) -> None:
+        self._busy_end()
+        log = self.query_one(LogPanel)
+        if isinstance(outcome, Failed) and outcome.kind == "collection_missing":
             log.set_status("Couldn't rebuild filtered decks.")
             self.app.push_screen(
                 ErrorModal(
@@ -660,17 +555,69 @@ class DeckDetailScreen(Screen):
             return
         assert isinstance(outcome, Completed)
         self._on_rebuild_filtered_done(outcome.value)
+        self._refresh_status_line()
 
-    def _handle_build_failed(self, outcome: Failed) -> None:
+    # ---------- Check-updates (background) ---------- #
+
+    def _start_check_updates(self) -> None:
+        # Background, informational. Don't touch _busy / action-button enabled
+        # state — the user should be able to keep clicking buttons while the
+        # fetch happens, and disabling them visibly flashes the buttons grey
+        # for a moment after the screen mounts.
+        panel = self.query_one(UpdatesPanel)
+        panel.set_status("Checking for updates…")
+        job = check_for_updates_job(self._deck, on_log=self._on_log)
+        run_job(self, job, on_done=self._on_check_updates_outcome)
+
+    def _on_check_updates_outcome(
+        self, outcome: JobOutcome[CheckUpdatesResult]
+    ) -> None:
+        panel = self.query_one(UpdatesPanel)
+        if isinstance(outcome, (NetworkFailed, Failed)):
+            panel.set_status(f"Couldn't check for updates: {_message_of(outcome)}")
+            return
+        assert isinstance(outcome, Completed)
+        self._on_check_updates_done(outcome.value)
+
+    # ---------- shared modals ---------- #
+
+    def _show_locked_modal(
+        self, *, retry: Callable[[], None], op_label: str
+    ) -> None:
         log = self.query_one(LogPanel)
-        log.set_status("Couldn't make the Anki file.")
+        log.set_status(f"{op_label} paused — Anki is open.")
+
+        def _on_close(should_retry: bool | None) -> None:
+            if should_retry:
+                retry()
+            else:
+                self._busy_end()
+
+        self.app.push_screen(AnkiLockedModal(), _on_close)
+
+    def _handle_card_overrides(self) -> None:
+        def _on_choice(confirmed: bool | None) -> None:
+            if not confirmed:
+                self.query_one(LogPanel).set_status("Build cancelled.")
+                self._busy_end()
+                self._refresh_status_line()
+                return
+            # Re-run the build with the override flag set; busy stays True.
+            self._chain_build(ignore_card_overrides=True)
+
         self.app.push_screen(
-            ErrorModal(
-                title="The deck files don't look right",
-                body="We couldn't prepare an Anki file from this deck. The files "
-                "might be incomplete or in a format we don't understand.",
-                details=outcome.message,
-            )
+            ConfirmModal(
+                title="This deck has special card placement",
+                body=(
+                    "Some cards in this deck live in different decks than their notes. "
+                    "We can still prepare an Anki file, but those cards will all land "
+                    "in their note's main deck. Continue anyway?"
+                ),
+                confirm_label="Yes, prepare anyway",
+                cancel_label="Cancel",
+                confirm_variant="primary",
+            ),
+            _on_choice,
         )
 
     def _handle_download_failed(self, message: str) -> None:
@@ -697,53 +644,7 @@ class DeckDetailScreen(Screen):
             ErrorModal(title="Couldn't update the deck", body=message)
         )
 
-    def _show_locked_modal(self, *, retry, op_label: str) -> None:
-        log = self.query_one(LogPanel)
-        log.set_status(f"{op_label} paused — Anki is open.")
-
-        def _on_close(should_retry: bool | None) -> None:
-            if should_retry:
-                retry()
-
-        self.app.push_screen(AnkiLockedModal(), _on_close)
-
-    def _handle_card_overrides(self) -> None:
-        def _on_choice(confirmed: bool | None) -> None:
-            if not confirmed:
-                self.query_one(LogPanel).set_status("Build cancelled.")
-                return
-            # Re-run the build with the override flag set.
-            self._busy = True
-            self._current_op = "build"
-            self._set_action_buttons_enabled(False)
-            log = self.query_one(LogPanel)
-            log.set_status("Preparing Anki file (with cards.csv ignored)…")
-            self.run_worker(
-                lambda: make_apkg(
-                    self._deck,
-                    self.app.config.default_save_folder,
-                    on_log=self._on_log,
-                    ignore_card_overrides=True,
-                ),
-                thread=True,
-                exclusive=True,
-                group="deck-actions",
-            )
-
-        self.app.push_screen(
-            ConfirmModal(
-                title="This deck has special card placement",
-                body=(
-                    "Some cards in this deck live in different decks than their notes. "
-                    "We can still prepare an Anki file, but those cards will all land "
-                    "in their note's main deck. Continue anyway?"
-                ),
-                confirm_label="Yes, prepare anyway",
-                cancel_label="Cancel",
-                confirm_variant="primary",
-            ),
-            _on_choice,
-        )
+    # ---------- outcome-detail handlers ---------- #
 
     def _on_filtered_decks_done(self, result: ApplyReport) -> None:
         log = self.query_one(LogPanel)
@@ -843,9 +744,6 @@ class DeckDetailScreen(Screen):
 
     def _on_check_updates_done(self, result: CheckUpdatesResult) -> None:
         panel = self.query_one(UpdatesPanel)
-        if result.failure is not None:
-            panel.set_status(f"Couldn't check for updates: {result.failure.message}")
-            return
         panel.set_commits(result.commits)
         new_count = sum(1 for c in result.commits if c.is_new)
         local = (self._deck.last_pulled_commit or "")[:7]
@@ -862,6 +760,24 @@ class DeckDetailScreen(Screen):
         else:
             panel.set_status(f"Showing {len(result.commits)} recent commit(s).")
         self._refresh_button_variants()
+
+    # ---------- _busy bookkeeping ---------- #
+
+    def _busy_start(self, *, log_status: str, progress_phase: str | None = None) -> None:
+        self._busy = True
+        log = self.query_one(LogPanel)
+        log.clear()
+        log.set_status(log_status)
+        if progress_phase is not None:
+            log.set_progress(0, phase=progress_phase)
+        self._set_action_buttons_enabled(False)
+
+    def _busy_end(self) -> None:
+        self._busy = False
+        self._set_action_buttons_enabled(True)
+        self.query_one(LogPanel).set_progress(None)
+
+    # ---------- layout helpers ---------- #
 
     def _scroll_to_download_card(self) -> None:
         try:
@@ -1012,3 +928,7 @@ class DeckDetailScreen(Screen):
         except NoMatches:
             self.log.debug("status-line refs not in DOM during refresh")
         self._refresh_button_variants()
+
+
+def _message_of(outcome: NetworkFailed | Failed) -> str:
+    return outcome.message

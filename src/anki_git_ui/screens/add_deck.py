@@ -10,11 +10,45 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Input, Static
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 
-from ..domain.git_ops import RemoteFailed, RemoteOutcome, verify_anki_gitify_remote
+from ..domain.git_ops import (
+    GitFailureKind,
+    RemoteOk,
+    RemoteOutcome,
+    verify_anki_gitify_remote,
+)
+from ..domain.jobs import Completed, Failed, JobOutcome, NetworkFailed
 from ..domain.models import DeckEntry, DeckStatus
+from ..jobs import Job, dispatch_job_event, run_job
 from ..workers.download_deck_worker import deck_local_path, deck_nickname
+
+
+# Distinct from the dashboard / deck-detail's "deck-actions" group, so a verify
+# in flight cannot be cancelled by anything outside this screen.
+_VERIFY_GROUP = "add-deck-verify"
+
+
+def _verify_remote_job(url: str) -> Job[RemoteOk]:
+    """Wrap :func:`verify_anki_gitify_remote` as a :class:`Job`.
+
+    Network failures surface as :class:`NetworkFailed`; the "this isn't an
+    anki-gitify deck" case surfaces as :class:`Failed` with
+    ``kind="non_anki_gitify"`` so the screen can render a tailored message.
+    """
+
+    def _work() -> JobOutcome[RemoteOk]:
+        outcome: RemoteOutcome = verify_anki_gitify_remote(url)
+        if isinstance(outcome, RemoteOk):
+            return Completed(outcome)
+        if outcome.kind is GitFailureKind.NETWORK:
+            return NetworkFailed(message=outcome.message)
+        kind = "non_anki_gitify" if outcome.kind is GitFailureKind.NOT_ANKI_GITIFY else outcome.kind.value
+        return Failed(
+            exc=RuntimeError(outcome.message), message=outcome.message, kind=kind
+        )
+
+    return Job(name="verify-remote", work=_work)
 
 
 class AddDeckScreen(Screen):
@@ -123,11 +157,11 @@ class AddDeckScreen(Screen):
             self._url = url
             self._verifying = True
             self.app.notify("Checking the link and looking for gitify.yml…", timeout=3)
-            self.run_worker(
-                lambda: verify_anki_gitify_remote(self._url),
-                thread=True,
-                exclusive=True,
-                group="add-deck-verify",
+            run_job(
+                self,
+                _verify_remote_job(self._url),
+                on_done=self._on_verify_done,
+                group=_VERIFY_GROUP,
             )
         elif bid == "prev":
             # Save edits to step-2 fields so they don't reset on Back.
@@ -197,26 +231,21 @@ class AddDeckScreen(Screen):
         self.app.switch_screen(DeckDetailScreen(deck=deck, auto_download=True))
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR):
-            return
+        dispatch_job_event(self, event)
+
+    def _on_verify_done(self, outcome: JobOutcome[RemoteOk]) -> None:
         self._verifying = False
-        if event.state == WorkerState.ERROR:
-            self.app.notify(
-                "We couldn't check that link.",
-                title="Link is not valid",
-                severity="error",
-            )
+        if isinstance(outcome, Completed):
+            self._step = 2
+            self._refresh()
             return
-        outcome: RemoteOutcome = event.worker.result
-        if isinstance(outcome, RemoteFailed):
-            self.app.notify(
-                outcome.message,
-                title="Link is not valid",
-                severity="error",
-            )
-            return
-        self._step = 2
-        self._refresh()
+        # NetworkFailed / Failed — both surface as a notify; the framework's
+        # Failed wrapping a raw exception is also routed here, so we present
+        # a single "link not valid" message regardless of the underlying kind.
+        message = outcome.message if hasattr(outcome, "message") else "We couldn't check that link."
+        self.app.notify(
+            message, title="Link is not valid", severity="error"
+        )
 
 
 def _clone_self(screen: AddDeckScreen) -> AddDeckScreen:

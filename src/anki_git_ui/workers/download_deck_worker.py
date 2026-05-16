@@ -12,12 +12,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..domain.git_ops import (
+    CloneFailed,
     CloneOutcome,
     CloneProgress,
     CloneSucceeded,
+    GitFailureKind,
     clone_deck,
 )
+from ..domain.jobs import Completed, Failed, JobOutcome, NetworkFailed
 from ..domain.models import DeckEntry
+from ..jobs import Job
 
 
 def download_deck(
@@ -41,6 +45,41 @@ def download_deck(
         deck.last_pulled_commit = outcome.commit
         deck.last_pulled_at = outcome.pulled_at
     return outcome
+
+
+def download_deck_job(
+    deck: DeckEntry,
+    *,
+    on_log: Callable[[str], None] | None = None,
+    on_progress: Callable[[CloneProgress], None] | None = None,
+) -> Job[CloneSucceeded]:
+    """Build a :class:`Job` that clones ``deck`` and translates the result to a
+    :class:`JobOutcome`.
+
+    Network failures (DNS, timeout, host unreachable) surface as
+    :class:`NetworkFailed`; everything else (auth, repo not found, unsupported
+    URL, unknown) as :class:`Failed` carrying the ``GitFailureKind`` as
+    ``kind`` so callers can branch on it (e.g. the add-deck flow's
+    ``"non_anki_gitify"`` handling).
+    """
+
+    def _work() -> JobOutcome[CloneSucceeded]:
+        outcome = download_deck(deck, on_log=on_log, on_progress=on_progress)
+        if isinstance(outcome, CloneSucceeded):
+            return Completed(outcome)
+        return _git_failed_to_job_outcome(outcome)
+
+    return Job(name="download", work=_work)
+
+
+def _git_failed_to_job_outcome(failed: CloneFailed) -> JobOutcome:
+    if failed.kind is GitFailureKind.NETWORK:
+        return NetworkFailed(message=failed.message)
+    return Failed(
+        exc=RuntimeError(failed.message),
+        message=failed.message,
+        kind=failed.kind.value,
+    )
 
 
 def _url_basename(url: str) -> str:

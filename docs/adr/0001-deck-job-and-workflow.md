@@ -1,6 +1,6 @@
 # ADR 0001 — Deck Job and Workflow
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-16
 
 ## Context
@@ -57,11 +57,11 @@ The mechanism (Textual worker plumbing, message routing) lives once, in a small 
 
 **Cost** — there are three real deck operations today and a 4th-5th implied. The Workflow concept is justified by 4+ chains (Download, Update, ApplyFiltered, AnkiLockedRetry). With only one chain, this would be premature; with four, it's earning its keep.
 
-## Open questions deferred to implementation
+## How the open questions resolved
 
-- Whether `AnkiLockedRetryWorkflow` is a workflow or a job decorator. Pick whichever falls out cleaner once two jobs need it.
-- Whether `JobOutcome` is a sealed class hierarchy or a tagged union via `match`. Python doesn't have sum types natively; pick whatever the existing dataclass conventions favour.
-- Whether `Workflow` is its own class or just a top-level function that composes jobs. Start with functions; promote to a class only when a second workflow needs the same scaffolding.
+- **AnkiLocked retry is a framework helper, not a workflow.** Implemented as `run_with_anki_locked_retry(screen, job, on_done, on_locked)` in [src/anki_git_ui/jobs.py](../../src/anki_git_ui/jobs.py). The screen supplies an `on_locked(retry)` callback that pushes the modal and calls `retry()` on confirm. Used by both filtered-decks and rebuild flows in [deck_detail.py](../../src/anki_git_ui/screens/deck_detail.py).
+- **`JobOutcome` is a discriminated union of frozen dataclasses**, matching the existing `anki_interop` / `git_ops` conventions: `Completed[T]`, `AnkiLocked`, `NetworkFailed(message)`, `Failed(exc, message, kind?)`. Lives in [src/anki_git_ui/domain/jobs.py](../../src/anki_git_ui/domain/jobs.py). The `kind` discriminator on `Failed` carries operation-specific tags (`"card_override"`, `"collection_missing"`, `"non_anki_gitify"`) that screens branch on for tailored UX.
+- **Workflows are screen-level function compositions, not a class.** Chains are spelled as nested `on_done` callbacks: e.g. clone → build is `run_job(self, clone_job, on_done=_on_clone_done)` where `_on_clone_done` calls `run_job(self, build_job, on_done=_on_build_done)`. Promote to a class only if a second screen needs the same scaffolding.
 
 ## Alternatives considered
 

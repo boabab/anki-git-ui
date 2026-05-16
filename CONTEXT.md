@@ -24,7 +24,7 @@ When a term in the codebase isn't here, either it's incidental or this file is s
 
 **Workflow** — an ordered sequence of jobs with transition rules. Examples: "after download, build the `.apkg`"; "after update, build only if the commit changed"; "after apply-filtered, offer rebuild." Workflows are how screens compose multi-step user intents without owning per-step state machines.
 
-**Job outcome** — the discriminated result of a job: `Completed(value)`, `AnkiLocked`, `NetworkFailed`, `Failed(exc)`. Replaces ad-hoc "`result.error` + isinstance chain" patterns.
+**Job outcome** — the discriminated result of a job: `Completed(value)`, `AnkiLocked`, `NetworkFailed(message)`, `Failed(exc, message, kind?)`. The optional `kind` discriminator on `Failed` (`"card_override"`, `"collection_missing"`, `"non_anki_gitify"` …) lets a screen branch to a tailored modal without rebuilding the type hierarchy. Replaces ad-hoc "`result.error` + isinstance chain" patterns.
 
 **Activity log** — the streaming, per-screen log surface (rendered by `LogPanel`). Workers write to it via `on_log` callbacks supplied at job start.
 

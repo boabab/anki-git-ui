@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..domain.git_ops import CommitsFailed, CommitsListed, list_recent_commits
+from ..domain.git_ops import CommitsFailed, CommitsListed, GitFailureKind, list_recent_commits
+from ..domain.jobs import Completed, Failed, JobOutcome, NetworkFailed
 from ..domain.models import DeckEntry
+from ..jobs import Job
 
 
 @dataclass
@@ -68,3 +70,31 @@ def check_for_updates(
             CommitLine(subject=c.subject, date=c.date, short=c.short, is_new=is_new)
         )
     return CheckUpdatesResult(commits=commits, branch=outcome.branch or deck.branch)
+
+
+def check_for_updates_job(
+    deck: DeckEntry,
+    *,
+    limit: int = 20,
+    on_log: Callable[[str], None] | None = None,
+) -> Job[CheckUpdatesResult]:
+    """Build a :class:`Job` that fetches the remote and lists recent commits.
+
+    A successful listing — even one that reveals no new commits — returns
+    :class:`Completed`. A network failure during the fetch step is reported as
+    :class:`NetworkFailed`; everything else falls through to :class:`Failed`.
+    """
+
+    def _work() -> JobOutcome[CheckUpdatesResult]:
+        result = check_for_updates(deck, limit=limit, on_log=on_log)
+        if result.failure is None:
+            return Completed(result)
+        if result.failure.kind is GitFailureKind.NETWORK:
+            return NetworkFailed(message=result.failure.message)
+        return Failed(
+            exc=RuntimeError(result.failure.message),
+            message=result.failure.message,
+            kind=result.failure.kind.value,
+        )
+
+    return Job(name="check", work=_work)
